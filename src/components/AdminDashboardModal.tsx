@@ -1394,6 +1394,23 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 <Unlock className="w-4 h-4 text-black stroke-[2.5]" />
                 <span>دخول اللوحة وتفعيل التنبيهات الفورية</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPinInput('1234');
+                  setIsAuthenticated(true);
+                  try {
+                    sessionStorage.setItem('queen_admin_auth', 'true');
+                    localStorage.setItem('queen_admin_auth', 'true');
+                  } catch {}
+                  setSaveSuccessMsg('تم الدخول التجريبي السريع بنجاح! 🎉🔑');
+                  setTimeout(() => setSaveSuccessMsg(null), 2500);
+                }}
+                className="w-full mt-2.5 bg-[#27272A]/80 hover:bg-[#27272A] text-[#FFE58F] border border-[#D4AF37]/30 font-bold text-xs py-3 px-4 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <span>🔑 دخول سريع كـ مسؤول تجريبي (PIN: 1234)</span>
+              </button>
             </form>
           </div>
         ) : (

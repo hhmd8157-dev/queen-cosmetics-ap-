@@ -6,9 +6,10 @@ import { CategoryId } from '../types';
 interface FooterProps {
   onSelectCategory: (cat: CategoryId) => void;
   onOpenTracker?: () => void;
+  onOpenAdmin?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker }) => {
+export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker, onOpenAdmin }) => {
   return (
     <footer className="bg-[#1A1A1A] text-[#999999] pt-14 pb-10 border-t border-[#333333]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -157,6 +158,17 @@ export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker 
                   <span>اصنع خلطة بخورك الخاصة</span>
                 </button>
               </li>
+              {onOpenAdmin && (
+                <li className="pt-1.5 border-t border-[#2A2A2A]">
+                  <button
+                    onClick={onOpenAdmin}
+                    className="text-[#FFE58F] hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 font-bold"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#D4AF37]" />
+                    <span>لوحة تحكم الإدارة 👑</span>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 

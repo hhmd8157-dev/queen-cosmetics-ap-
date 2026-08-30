@@ -222,6 +222,12 @@ export default function App() {
     setIsTrackerOpen(false);
     showToast('تمت إزالة التتبع بنجاح. يمكنك الآن تصفح المتجر وإجراء طلب جديد 🛍️', 'info');
   };
+
+  const handleOpenAdmin = () => {
+    setIsAdminOpen(true);
+    window.history.pushState(null, '', '/admin');
+  };
+
   // URL route check for /admin
   useEffect(() => {
     const handleHashOrPathChange = () => {
@@ -479,6 +485,7 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenTracker={() => setIsTrackerOpen(true)}
+        onOpenAdmin={handleOpenAdmin}
         theme={theme}
         onToggleTheme={handleToggleTheme}
       />
@@ -739,6 +746,7 @@ export default function App() {
       <Footer 
         onSelectCategory={setSelectedCategory} 
         onOpenTracker={() => setIsTrackerOpen(true)}
+        onOpenAdmin={handleOpenAdmin}
       />
 
       {/* Floating WhatsApp Action Button */}
