@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Store products catalogue with real-time stock and pricing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "enName": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "isOffer": { "type": "boolean" },
+        "image": { "type": "string" },
+        "additionalImages": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "isBestSeller": { "type": "boolean" },
+        "inStock": { "type": "boolean" },
+        "volumeOrWeight": { "type": "string" },
+        "madeIn": { "type": "string" },
+        "benefits": { "type": "array", "items": { "type": "string" } },
+        "howToUse": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "name", "price", "category", "inStock"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "entity": "Product",
+      "description": "Collection of all store products"
+    }
+  }
+}

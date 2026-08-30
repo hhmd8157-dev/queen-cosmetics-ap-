@@ -1,0 +1,10 @@
+{
+  "name": "كوزمتك الملكة - Queen Cosmetics",
+  "description": "متجر كوزمتك الملكة المتخصص بأرقى منتجات العناية بالبشرة، الشعر، العطور والبخور مع نظام الطلب المباشر وتتبع الشحنات المباشر ولوحة إدارة الطلبات.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
