@@ -21,6 +21,7 @@
         "reviewCount": { "type": "number" },
         "isBestSeller": { "type": "boolean" },
         "inStock": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
         "volumeOrWeight": { "type": "string" },
         "madeIn": { "type": "string" },
         "benefits": { "type": "array", "items": { "type": "string" } },
@@ -32,7 +33,7 @@
   },
   "firestore": {
     "/products/{productId}": {
-      "entity": "Product",
+      "schema": "Product",
       "description": "Collection of all store products"
     }
   }

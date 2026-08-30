@@ -38,6 +38,9 @@ export interface Product {
   isOffer?: boolean;
   inStock: boolean;
   stockCount?: number;
+  isDeleted?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
   volumeOrWeight?: string;
   madeIn?: string;
   benefits?: string[];

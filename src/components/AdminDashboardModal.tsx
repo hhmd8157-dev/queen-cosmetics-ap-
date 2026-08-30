@@ -48,9 +48,13 @@ import {
   updateProductPricingInFirestore, 
   toggleProductStockInFirestore, 
   updateProductInFirestore,
+  addNewProductToFirestore,
+  subscribeToProductsRealtime,
+  resetStoreProductsToDefault,
   forceSyncAllToFirestore,
   deleteProductFromFirestore
 } from '../services/productsFirestoreService';
+import { compressAndProcessImage } from '../utils/imageUpload';
 import {
   initAudioContext,
   playRoyalOrderChime,
@@ -118,6 +122,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [adminCategories, setAdminCategories] = useState<Category[]>(() => getStoredCategories());
   const [productSearch, setProductSearch] = useState<string>('');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState<string | null>(null);
+  const [isModalImageProcessing, setIsModalImageProcessing] = useState<boolean>(false);
 
   // Category management states
   const [newCatNameAr, setNewCatNameAr] = useState('');
@@ -380,6 +386,22 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         isBestSeller: productForm.isBestSeller,
       };
       updated = [newProduct, ...adminProducts];
+
+      setAdminProducts(updated);
+      saveStoredProducts(updated);
+      window.dispatchEvent(new Event('queen_products_updated'));
+
+      try {
+        await addNewProductToFirestore(newProduct);
+        setSaveSuccessMsg('تمت إضافة المنتج الجديد وحفظه في قاعدة البيانات السحابية بنجاح! ☁️✨');
+      } catch (e) {
+        console.error('Firestore add error:', e);
+        setSaveSuccessMsg('تم حفظ المنتج محلياً بنجاح! ✨');
+      }
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+      setEditingProductModal(null);
+      setIsAddingNewProductModal(false);
+      return;
     }
 
     setAdminProducts(updated);
@@ -400,8 +422,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           isOffer: isOffer,
           isBestSeller: productForm.isBestSeller,
         });
-      } else {
-        await forceSyncAllToFirestore(updated);
       }
       setSaveSuccessMsg('تم حفظ وتحديث سعر المنتج بنجاح ومزامنته سحابياً! ☁️✨');
     } catch (e) {
@@ -417,6 +437,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setAdminProducts(getStoredProducts());
+      const unsubscribe = subscribeToProductsRealtime((latestProducts) => {
+        if (latestProducts && latestProducts.length > 0) {
+          setAdminProducts(latestProducts);
+        }
+      });
+      return () => unsubscribe();
     }
   }, [isOpen]);
 
@@ -665,17 +691,20 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setTimeout(() => setSaveSuccessMsg(null), 2500);
   };
 
-  const handleProductFileUpload = (productId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductFileUpload = async (productId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      if (result) {
-        handleUpdateProductImage(productId, result);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      setIsUploadingImage(productId);
+      const optimizedUrl = await compressAndProcessImage(file);
+      await handleUpdateProductImage(productId, optimizedUrl);
+      setSaveSuccessMsg('تم رفع وتحسين صورة المنتج ومزامنتها سحابياً! 📸☁️');
+    } catch (err) {
+      console.error('Failed to process image:', err);
+      alert('حدث خطأ أثناء معالجة الصورة، يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsUploadingImage(null);
+    }
   };
 
   const handleUpdateProductPrice = async (productId: string, price: number, originalPrice?: number) => {
@@ -2528,15 +2557,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                     <button
                       onClick={async () => {
-                        if (window.confirm('هل أنت متأكد من إعادة ضبط المنتجات للمجموعة الأصلية الافتراضية (103 منتج)؟ سيتم حذف أي تعديلات أو منتجات قمت بإضافتها.')) {
+                        if (window.confirm('هل أنت متأكد من إعادة ضبط المنتجات للمجموعة الأصلية الافتراضية (103 منتج)؟ سيتم استعادة كافة المنتجات الأصلية وإلغاء علامات الحذف.')) {
                           try {
                             localStorage.removeItem('queen_cosmetics_products_clean_v1');
-                            const defaultProds = PRODUCTS;
-                            setAdminProducts(defaultProds);
-                            saveStoredProducts(defaultProds);
+                            await resetStoreProductsToDefault();
+                            setAdminProducts(PRODUCTS);
+                            saveStoredProducts(PRODUCTS);
                             window.dispatchEvent(new Event('queen_products_updated'));
-                            await forceSyncAllToFirestore(defaultProds);
-                            setSaveSuccessMsg('تمت إعادة ضبط جميع المنتجات الـ 103 للأصل ومزامنتها بنجاح! 🔄✨');
+                            setSaveSuccessMsg('تمت إعادة ضبط جميع المنتجات الـ 103 للأصل ومزامنتها في السحابة بنجاح! 🔄✨');
                             setTimeout(() => setSaveSuccessMsg(null), 3000);
                           } catch (err) {
                             console.error(err);
@@ -2588,10 +2616,15 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                 </div>
                               )}
                               <label className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold cursor-pointer transition-opacity text-center p-1">
-                                <span>تغيير الصورة</span>
+                                {isUploadingImage === product.id ? (
+                                  <RefreshCw className="w-4 h-4 animate-spin text-[#D4AF37]" />
+                                ) : (
+                                  <span>تغيير الصورة</span>
+                                )}
                                 <input
                                   type="file"
                                   accept="image/*"
+                                  disabled={isUploadingImage === product.id}
                                   onChange={(e) => handleProductFileUpload(product.id, e)}
                                   className="hidden"
                                 />
@@ -3523,21 +3556,32 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     placeholder="اسم الصورة مثل (7 الاف.jpg) أو رابط..."
                     className="flex-1 bg-[#121214] border border-[#2E2E33] focus:border-[#D4AF37] text-xs text-white p-2.5 rounded-xl outline-hidden"
                   />
-                  <label className="bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer transition-colors border border-[#3F3F46]">
-                    <span>رفع صورة</span>
+                  <label className={`bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer transition-colors border border-[#3F3F46] flex items-center gap-1.5 ${isModalImageProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    {isModalImageProcessing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#D4AF37]" />
+                        <span>جاري المعالجة...</span>
+                      </>
+                    ) : (
+                      <span>رفع صورة 📸</span>
+                    )}
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={(e) => {
+                      disabled={isModalImageProcessing}
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => {
-                            if (ev.target?.result) {
-                              setProductForm({ ...productForm, image: ev.target.result as string });
-                            }
-                          };
-                          reader.readAsDataURL(file);
+                          try {
+                            setIsModalImageProcessing(true);
+                            const optimizedUrl = await compressAndProcessImage(file);
+                            setProductForm({ ...productForm, image: optimizedUrl });
+                          } catch (err) {
+                            console.error('Error processing image:', err);
+                            alert('حدث خطأ أثناء معالجة الصورة. يرجى المحاولة مرة أخرى.');
+                          } finally {
+                            setIsModalImageProcessing(false);
+                          }
                         }
                       }}
                       className="hidden"

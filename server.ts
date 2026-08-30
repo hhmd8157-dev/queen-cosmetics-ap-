@@ -268,11 +268,51 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "15mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+
+  // Ensure public uploads directory exists and is served statically
+  const uploadsDir = path.join(process.cwd(), "public", "uploads");
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  app.use("/uploads", express.static(uploadsDir));
 
   // Health check API
   app.get("/api/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // 📷 Product Image Upload endpoint
+  app.post("/api/upload-image", (req: Request, res: Response) => {
+    try {
+      const { image, name } = req.body;
+      if (!image || typeof image !== "string" || !image.startsWith("data:")) {
+        return res.status(400).json({ error: "Invalid image format" });
+      }
+
+      const matches = image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).json({ error: "Invalid base64 payload" });
+      }
+
+      const mimeType = matches[1];
+      const extension = mimeType.includes("webp") ? "webp" : mimeType.includes("png") ? "png" : "jpg";
+      const sanitizedName = (name || "product")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "-")
+        .substring(0, 30);
+      const filename = `${sanitizedName}-${Date.now()}.${extension}`;
+      const destPath = path.join(uploadsDir, filename);
+
+      const buffer = Buffer.from(matches[2], "base64");
+      fs.writeFileSync(destPath, buffer);
+
+      res.json({ success: true, url: `/uploads/${filename}` });
+    } catch (error: any) {
+      console.error("Error uploading image:", error);
+      res.status(500).json({ error: "Failed to upload image" });
+    }
   });
 
   // 📧 Endpoint for queuing email notifications
