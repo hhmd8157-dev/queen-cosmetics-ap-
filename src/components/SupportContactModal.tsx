@@ -69,9 +69,27 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
       } catch {}
     });
 
+    // Broadcast new chat message event for Admin Panel (same tab & other tabs)
+    try {
+      window.dispatchEvent(new CustomEvent('queen_new_chat_message', { detail: { message: newChatMessage } }));
+      const channel = new BroadcastChannel('queen_orders_channel');
+      channel.postMessage({ type: 'NEW_CHAT_MESSAGE', payload: newChatMessage, timestamp: Date.now() });
+      channel.close();
+    } catch {}
+
     try {
       // Send direct client-side telegram notification as a robust production backup for Vercel/Static deployments
-      const tgText = `💬 <b>رسالة جديدة من زبون الدعم الفني</b>\n━━━━━━━━━━━━━━━━━━━━\n🔖 <b>رقم الدعم:</b> <code>#${supportCode}</code>\n👤 <b>الاسم:</b> <b>${cleanName}</b>\n📞 <b>الهاتف:</b> <code>${cleanPhone}</code>\n\n✉️ <b>الرسالة:</b>\n${cleanMessage}\n━━━━━━━━━━━━━━━━━━━━\n<i>تم الإرسال من الموقع المباشر</i> ✨`;
+      const tgText = `💬 <b>رسالة جديدة من زبون الدعم الفني</b>
+━━━━━━━━━━━━━━━━━━━━
+🔖 <b>رقم الدعم:</b> <code>#${supportCode}</code>
+👤 <b>الاسم:</b> <b>${cleanName}</b>
+📞 <b>الهاتف:</b> <code>${cleanPhone}</code>
+
+✉️ <b>الرسالة:</b>
+${cleanMessage}
+━━━━━━━━━━━━━━━━━━━━
+<i>تم الإرسال من الموقع المباشر</i> ✨`;
+      
       sendTelegramDirectClientSide(tgText).catch((tgErr) => {
         console.warn('Direct telegram client send notice:', tgErr);
       });

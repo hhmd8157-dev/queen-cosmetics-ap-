@@ -8,6 +8,7 @@ import {
   ShieldCheck, 
   Flower2, 
   Crown,
+  Tag,
   SlidersHorizontal,
   ArrowUpDown
 } from 'lucide-react';
@@ -56,7 +57,9 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
   const currentCategoryData = categories.find((c) => c.id === selectedCategory);
   const subCategories = currentCategoryData?.subCategories || [];
 
-  const getCategoryIcon = (id: CategoryId) => {
+  const getCategoryIcon = (id: string, iconName?: string) => {
+    // If a custom iconName is provided (from category data), we could map it, 
+    // but for now we fallback to the hardcoded icons or a default one.
     switch (id) {
       case 'all':
         return <LayoutGrid className="w-4 h-4 text-[#C5A059]" />;
@@ -69,13 +72,18 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
       case 'mixtures':
         return <Sparkles className="w-4 h-4 text-emerald-500" />;
       case 'skincare':
+      case 'عناية':
         return <ShieldCheck className="w-4 h-4 text-cyan-600" />;
       case 'body_sprays_deo':
         return <Flower2 className="w-4 h-4 text-pink-500" />;
       case 'perfumes':
+      case 'عطور':
         return <Crown className="w-4 h-4 text-purple-600" />;
+      case 'haircare':
+      case 'شعر':
+        return <Sparkles className="w-4 h-4 text-blue-500" />;
       default:
-        return <Sparkles className="w-4 h-4" />;
+        return <Tag className="w-4 h-4 text-[#C5A059]" />;
     }
   };
 
@@ -116,7 +124,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
                 }`}
               >
                 <span className="leading-none">
-                  {getCategoryIcon(cat.id)}
+                  {getCategoryIcon(cat.id, cat.iconName)}
                 </span>
                 <span className="tracking-tight">{cat.name}</span>
                 <span

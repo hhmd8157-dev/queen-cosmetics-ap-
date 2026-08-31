@@ -860,6 +860,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           triggerNewOrderAlert(orderData);
           fetchOrders(true);
         }
+      } else if (e.data?.type === 'ORDER_DELETED' && e.data?.payload?.orderId) {
+        const delId = e.data.payload.orderId;
+        setOrders((prev) => prev.filter((o) => o.id !== delId && o.trackingCode !== delId));
+      } else if (e.data?.type === 'NEW_CHAT_MESSAGE') {
+        fetchChatThreads();
+        if (soundEnabled) {
+          try {
+            const audio = new Audio('/notification.mp3');
+            audio.volume = soundVolume / 100;
+            audio.play().catch(() => {});
+          } catch {}
+        }
       }
     };
 
@@ -878,6 +890,22 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     };
     window.addEventListener('queen_new_order_event', handleSameTabOrder);
 
+    const handleSameTabDeletion = (e: any) => {
+      const { orderId } = e.detail;
+      if (orderId) {
+        setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
+      }
+    };
+    window.addEventListener('queen_order_deleted', handleSameTabDeletion as any);
+    
+    const handleSameTabChatMessage = (e: any) => {
+      fetchChatThreads();
+      if (selectedChatOrderId && e.detail?.message?.orderId === selectedChatOrderId) {
+        fetchSelectedChatMessages(selectedChatOrderId);
+      }
+    };
+    window.addEventListener('queen_new_chat_message', handleSameTabChatMessage as any);
+
     return () => {
       clearInterval(interval);
       unsubscribeOrders();
@@ -885,6 +913,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         channel.removeEventListener('message', handleBroadcastMessage);
       }
       window.removeEventListener('queen_new_order_event', handleSameTabOrder);
+      window.removeEventListener('queen_order_deleted', handleSameTabDeletion as any);
+      window.removeEventListener('queen_new_chat_message', handleSameTabChatMessage as any);
     };
   }, [isAuthenticated, soundEnabled, soundVolume, soundRepeats]);
 
@@ -909,27 +939,33 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const threadMap = new Map<string, any>();
     apiThreads.forEach((t) => threadMap.set(t.orderId.toUpperCase(), t));
 
-    // Merge local support chats
-    try {
-      const localSupport = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
-      localSupport.forEach((sc: any) => {
-        const code = (sc.orderId || 'SUPP-1000').toUpperCase();
-        if (!threadMap.has(code)) {
-          threadMap.set(code, {
-            orderId: code,
-            customerName: sc.customerName || 'زبون الدعم',
-            customerPhone: sc.customerPhone || '',
-            governorate: 'العراق',
-            orderStatus: 'received',
-            orderTotal: 0,
-            lastMessage: sc.text || 'رسالة دعم فني',
-            lastMessageTime: sc.createdAt || new Date().toISOString(),
-            unreadCount: 1,
-            messageCount: 1,
-          });
-        }
-      });
-    } catch {}
+    // Merge local support chats from multiple potential keys
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        localItems.forEach((sc: any) => {
+          if (!sc.text) return;
+          const code = (sc.orderId || sc.trackingCode || 'SUPP-1000').toUpperCase();
+          const existing = threadMap.get(code);
+          
+          if (!existing || new Date(sc.createdAt || 0).getTime() > new Date(existing.lastMessageTime || 0).getTime()) {
+            threadMap.set(code, {
+              orderId: code,
+              customerName: sc.senderName || sc.customerName || 'زبون الدعم',
+              customerPhone: sc.customerPhone || '',
+              governorate: sc.governorate || 'العراق',
+              orderStatus: existing?.orderStatus || 'received',
+              orderTotal: existing?.orderTotal || 0,
+              lastMessage: sc.text || 'رسالة دعم فني',
+              lastMessageTime: sc.createdAt || new Date().toISOString(),
+              unreadCount: (existing?.unreadCount || 0) + (sc.readByAdmin ? 0 : 1),
+              messageCount: (existing?.messageCount || 0) + 1,
+            });
+          }
+        });
+      } catch {}
+    });
 
     // Merge local orders
     try {
@@ -979,28 +1015,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const msgMap = new Map<string, any>();
     apiMessages.forEach((m) => msgMap.set(m.id || m.text, m));
 
-    // Merge local support messages
-    try {
-      const localSupport = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
-      localSupport.forEach((sc: any) => {
-        const code = (sc.orderId || '').toUpperCase();
-        if (code === orderId.toUpperCase()) {
-          const mKey = sc.id || sc.text;
-          if (!msgMap.has(mKey)) {
-            msgMap.set(mKey, {
-              id: sc.id || `msg-${Date.now()}`,
-              orderId: code,
-              sender: 'customer',
-              senderName: sc.customerName || 'زبون الدعم',
-              text: sc.text,
-              createdAt: sc.createdAt || new Date().toISOString(),
-              readByAdmin: true,
-              readByCustomer: false,
-            });
+    // Merge local support messages from multiple potential keys
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        localItems.forEach((sc: any) => {
+          const code = (sc.orderId || sc.trackingCode || '').toUpperCase();
+          if (code === orderId.toUpperCase()) {
+            const mKey = sc.id || sc.text;
+            if (!msgMap.has(mKey)) {
+              msgMap.set(mKey, {
+                id: mKey,
+                orderId: code,
+                sender: sc.sender || 'customer',
+                senderName: sc.senderName || sc.customerName || 'زبون',
+                text: sc.text,
+                createdAt: sc.createdAt || new Date().toISOString(),
+                readByAdmin: sc.readByAdmin || false,
+                readByCustomer: sc.readByCustomer || true,
+              });
+            }
           }
-        }
-      });
-    } catch {}
+        });
+      } catch {}
+    });
 
     const mergedMsgs = Array.from(msgMap.values());
     mergedMsgs.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
@@ -1269,6 +1308,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setUpdatingId(orderId);
     try {
       const note = driverNoteInput[orderId];
+      
+      // If status is delivered, we want to remove it from the active view/state as requested
+      if (newStatus === 'delivered') {
+        // Update everywhere first (this marks it as delivered in Firestore/Backend)
+        await updateOrderStatusEverywhere(orderId, newStatus, note);
+        
+        // Update local state: remove from the current view list
+        setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
+        setUpdatingId(null);
+        return;
+      }
+
       await updateOrderStatusEverywhere(orderId, newStatus, note);
 
       const targetOrder = orders.find((o) => o.id === orderId || o.trackingCode === orderId);
@@ -1346,7 +1397,11 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
   // Filter and search
   const filteredOrders = orders.filter((o) => {
-    const matchesFilter = activeFilter === 'all' || o.status === activeFilter;
+    // Exclude delivered/cancelled from 'all' tab as requested to keep dashboard clean
+    const matchesFilter = activeFilter === 'all' 
+      ? (o.status !== 'delivered' && o.status !== 'cancelled')
+      : o.status === activeFilter;
+
     const query = searchQuery.trim().toLowerCase();
     if (!query) return matchesFilter;
 
@@ -1361,7 +1416,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
   // Calculate stats
   const stats = {
-    total: orders.length,
+    total: orders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled').length,
     received: orders.filter((o) => o.status === 'received').length,
     preparing: orders.filter((o) => o.status === 'preparing').length,
     outForDelivery: orders.filter((o) => o.status === 'out_for_delivery').length,
@@ -2675,20 +2730,24 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       onClick={async () => {
                         if (window.confirm('هل أنت متأكد من استعادة كافة المنتجات الأصلية الافتراضية (103 منتج)؟')) {
                           try {
-                            localStorage.removeItem('queen_cosmetics_products');
-                            localStorage.removeItem('queen_cosmetics_products_clean_v1');
-                            await resetStoreProductsToDefault();
-                            setAdminProducts(PRODUCTS);
-                            saveStoredProducts(PRODUCTS);
-                            window.dispatchEvent(new Event('queen_products_updated'));
-                            setSaveSuccessMsg('تمت استعادة كافة المنتجات الأصلية (103 منتج) بنجاح! 🔄✨');
+                            localStorage.removeItem('app_products');
+                            localStorage.removeItem('app_categories');
+                            
+                            // Get fresh defaults
+                            const defaultProducts = PRODUCTS;
+                            const defaultCategories = CATEGORIES;
+                            
+                            setAdminProducts(defaultProducts);
+                            saveStoredProducts(defaultProducts);
+                            
+                            setAdminCategories(defaultCategories);
+                            saveStoredCategories(defaultCategories);
+                            
+                            setSaveSuccessMsg('تمت استعادة كافة البيانات الأصلية بنجاح! 🔄✨');
                             setTimeout(() => setSaveSuccessMsg(null), 3000);
                           } catch (err) {
                             console.error(err);
-                            setAdminProducts(PRODUCTS);
-                            saveStoredProducts(PRODUCTS);
-                            window.dispatchEvent(new Event('queen_products_updated'));
-                            setSaveSuccessMsg('تمت استعادة المنتجات الأصلية بنجاح! 🔄');
+                            setSaveSuccessMsg('حدث خطأ أثناء استعادة البيانات.');
                             setTimeout(() => setSaveSuccessMsg(null), 3000);
                           }
                         }
@@ -2950,11 +3009,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
               {/* Filter Tabs */}
               <div className="flex flex-wrap gap-1.5 bg-[#18181B] p-1 rounded-xl border border-[#2E2E33]">
                 {[
-                  { id: 'all', label: `الكل (${orders.length})` },
+                  { id: 'all', label: `النشطة (${stats.total})` },
                   { id: 'received', label: `جديدة (${stats.received})` },
                   { id: 'preparing', label: `تجهيز (${stats.preparing})` },
                   { id: 'out_for_delivery', label: `مع المندوب (${stats.outForDelivery})` },
-                  { id: 'delivered', label: `مكتملة (${stats.delivered})` },
                 ].map((tab) => (
                   <button
                     key={tab.id}
@@ -3306,7 +3364,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                 : 'bg-[#27272A] hover:bg-[#3F3F46] text-emerald-300 border border-emerald-500/30'
                             }`}
                           >
-                            <span>✅ تم التوصيل</span>
+                            <span>✅ تم التوصيل للمكان المطلوب</span>
                           </button>
 
                           <button

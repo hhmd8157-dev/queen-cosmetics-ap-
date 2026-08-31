@@ -373,9 +373,16 @@ export async function deleteOrderEverywhere(orderId: string): Promise<void> {
     }
   } catch {}
 
+  window.dispatchEvent(new CustomEvent('queen_order_deleted', { detail: { orderId } }));
   window.dispatchEvent(new Event('queen_orders_updated'));
 
-  // 2. Remove from Firestore
+  // Broadcast deletion to other tabs
+  try {
+    const channel = new BroadcastChannel('queen_orders_channel');
+    channel.postMessage({ type: 'ORDER_DELETED', payload: { orderId }, timestamp: Date.now() });
+    channel.close();
+  } catch {}
+
   try {
     const docRef = doc(db, ORDERS_COLLECTION, orderId);
     await deleteDoc(docRef);

@@ -2613,22 +2613,26 @@ export const formatIQD = (price: number): string => {
 
 export const getStoredProducts = (): Product[] => {
   try {
-    const saved = localStorage.getItem('queen_custom_products');
+    const saved = localStorage.getItem('app_products');
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      const customProducts = JSON.parse(saved);
+      if (Array.isArray(customProducts) && customProducts.length > 0) {
+        return customProducts;
       }
     }
+    return products;
   } catch (e) {
     console.error('Error loading stored products:', e);
+    return products;
   }
-  return products;
 };
 
 export const saveStoredProducts = (newProducts: Product[]): void => {
   try {
-    localStorage.setItem('queen_custom_products', JSON.stringify(newProducts));
+    // Only save the products that are NOT identical to static ones? 
+    // Actually, to respect user intent of "Unified Storage", we save the whole list.
+    // To avoid duplicating static products in the list, we ensure the IDs are handled.
+    localStorage.setItem('app_products', JSON.stringify(newProducts));
     window.dispatchEvent(new Event('queen_products_updated'));
   } catch (e) {
     console.error('Error saving stored products:', e);
@@ -2636,9 +2640,28 @@ export const saveStoredProducts = (newProducts: Product[]): void => {
 };
 
 export const getStoredCategories = (): Category[] => {
-  return CATEGORIES;
+  try {
+    const saved = localStorage.getItem('app_categories');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+    // If not in storage, initialize storage with default categories
+    localStorage.setItem('app_categories', JSON.stringify(CATEGORIES));
+    return CATEGORIES;
+  } catch (e) {
+    console.error('Error loading stored categories:', e);
+    return CATEGORIES;
+  }
 };
 
-export const saveStoredCategories = (_categories: Category[]): void => {
-  // Can be used for local override if needed
+export const saveStoredCategories = (categoriesList: Category[]): void => {
+  try {
+    localStorage.setItem('app_categories', JSON.stringify(categoriesList));
+    window.dispatchEvent(new Event('queen_categories_updated'));
+  } catch (e) {
+    console.error('Error saving stored categories:', e);
+  }
 };

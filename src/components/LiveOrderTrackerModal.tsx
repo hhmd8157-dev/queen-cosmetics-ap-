@@ -217,6 +217,42 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
 
     setChatMessages((prev) => [...prev, localMsg]);
     setUnreadChatCount(0);
+
+    // Save to localStorage as a backup and for Admin Panel discovery
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.push(localMsg);
+        localStorage.setItem(key, JSON.stringify(existing));
+      } catch {}
+    });
+
+    // Broadcast new chat message event for Admin Panel (same tab & other tabs)
+    try {
+      window.dispatchEvent(new CustomEvent('queen_new_chat_message', { detail: { message: localMsg } }));
+      const channel = new BroadcastChannel('queen_orders_channel');
+      channel.postMessage({ type: 'NEW_CHAT_MESSAGE', payload: localMsg, timestamp: Date.now() });
+      channel.close();
+    } catch {}
+
+    // Notify Telegram via direct client side helper
+    try {
+      const tgText = `💬 <b>محادثة جديدة من طلب زبون</b>
+━━━━━━━━━━━━━━━━━━━━
+🔖 <b>رقم الطلب:</b> <code>#${order.trackingCode}</code>
+👤 <b>الاسم:</b> <b>${order.customer.name}</b>
+📞 <b>الهاتف:</b> <code>${order.customer.phone}</code>
+
+✉️ <b>الرسالة:</b>
+${text}
+━━━━━━━━━━━━━━━━━━━━
+<i>تم الإرسال من صفحة تتبع الطلب</i> ✨`;
+      
+      const { sendTelegramDirectClientSide } = await import('../utils/telegramClient');
+      sendTelegramDirectClientSide(tgText).catch(() => {});
+    } catch {}
+
     setTimeout(() => {
       chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
