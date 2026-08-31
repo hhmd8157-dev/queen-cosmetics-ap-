@@ -18,15 +18,32 @@ const LOCAL_STORAGE_ORDERS_KEY = 'queen_orders';
 const LOCAL_STORAGE_ACTIVE_ORDER_KEY = 'active_order';
 const LOCAL_STORAGE_LAST_CODE_KEY = 'queen_last_order_code';
 
+const ORDERS_KEYS = ['queen_orders', 'orders', 'cosmetic_local_orders'];
+
 /**
- * Reads locally cached orders safely from LocalStorage
+ * Reads locally cached orders safely from LocalStorage across multiple keys
  */
 export function getLocalOrders(): Order[] {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const map = new Map<string, Order>();
+    ORDERS_KEYS.forEach((key) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              if (o && (o.id || o.trackingCode)) {
+                map.set(o.id || o.trackingCode, o);
+              }
+            });
+          }
+        }
+      } catch {}
+    });
+    const all = Array.from(map.values());
+    all.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return all;
   } catch (e) {
     console.warn('Error reading local orders:', e);
     return [];
@@ -34,11 +51,16 @@ export function getLocalOrders(): Order[] {
 }
 
 /**
- * Saves orders array safely to LocalStorage
+ * Saves orders array safely to LocalStorage across all unified keys
  */
 export function saveLocalOrders(orders: Order[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_ORDERS_KEY, JSON.stringify(orders));
+    const serialized = JSON.stringify(orders);
+    ORDERS_KEYS.forEach((key) => {
+      try {
+        localStorage.setItem(key, serialized);
+      } catch {}
+    });
   } catch (e) {
     console.warn('Error saving local orders:', e);
   }

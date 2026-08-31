@@ -58,7 +58,8 @@ import {
   fetchAllOrdersCombined, 
   subscribeToOrdersRealtime, 
   updateOrderStatusEverywhere, 
-  deleteOrderEverywhere 
+  deleteOrderEverywhere,
+  getLocalOrders
 } from '../services/ordersFirestoreService';
 import { compressAndProcessImage } from '../utils/imageUpload';
 import {
@@ -888,6 +889,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   }, [isAuthenticated, soundEnabled, soundVolume, soundRepeats]);
 
   const fetchChatThreads = async () => {
+    let apiThreads: any[] = [];
     try {
       const res = await fetch('/api/chats');
       const contentType = res.headers.get('content-type') || '';
@@ -896,16 +898,68 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         if (text && text.trim().length > 0) {
           const data = JSON.parse(text);
           if (data && data.threads) {
-            setChatThreads(data.threads);
+            apiThreads = data.threads;
           }
         }
       }
     } catch (err) {
       // Non-fatal
     }
+
+    const threadMap = new Map<string, any>();
+    apiThreads.forEach((t) => threadMap.set(t.orderId.toUpperCase(), t));
+
+    // Merge local support chats
+    try {
+      const localSupport = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
+      localSupport.forEach((sc: any) => {
+        const code = (sc.orderId || 'SUPP-1000').toUpperCase();
+        if (!threadMap.has(code)) {
+          threadMap.set(code, {
+            orderId: code,
+            customerName: sc.customerName || 'زبون الدعم',
+            customerPhone: sc.customerPhone || '',
+            governorate: 'العراق',
+            orderStatus: 'received',
+            orderTotal: 0,
+            lastMessage: sc.text || 'رسالة دعم فني',
+            lastMessageTime: sc.createdAt || new Date().toISOString(),
+            unreadCount: 1,
+            messageCount: 1,
+          });
+        }
+      });
+    } catch {}
+
+    // Merge local orders
+    try {
+      const localOrders = getLocalOrders();
+      localOrders.forEach((o) => {
+        const code = o.trackingCode.toUpperCase();
+        if (!threadMap.has(code)) {
+          threadMap.set(code, {
+            orderId: code,
+            customerName: o.customer.name,
+            customerPhone: o.customer.phone,
+            governorate: o.customer.governorate,
+            orderStatus: o.status,
+            orderTotal: o.total,
+            lastMessage: 'طلب جديد تم إنشاؤه',
+            lastMessageTime: o.createdAt,
+            unreadCount: 0,
+            messageCount: 0,
+          });
+        }
+      });
+    } catch {}
+
+    const mergedThreads = Array.from(threadMap.values());
+    mergedThreads.sort((a, b) => new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime());
+    setChatThreads(mergedThreads);
   };
 
   const fetchSelectedChatMessages = async (orderId: string) => {
+    let apiMessages: any[] = [];
     try {
       const res = await fetch(`/api/chats/${orderId}/messages?readBy=admin`);
       const contentType = res.headers.get('content-type') || '';
@@ -914,14 +968,44 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         if (text && text.trim().length > 0) {
           const data = JSON.parse(text);
           if (data && data.messages) {
-            setSelectedChatMessages(data.messages);
-            fetchChatThreads();
+            apiMessages = data.messages;
           }
         }
       }
     } catch (err) {
       // Non-fatal
     }
+
+    const msgMap = new Map<string, any>();
+    apiMessages.forEach((m) => msgMap.set(m.id || m.text, m));
+
+    // Merge local support messages
+    try {
+      const localSupport = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
+      localSupport.forEach((sc: any) => {
+        const code = (sc.orderId || '').toUpperCase();
+        if (code === orderId.toUpperCase()) {
+          const mKey = sc.id || sc.text;
+          if (!msgMap.has(mKey)) {
+            msgMap.set(mKey, {
+              id: sc.id || `msg-${Date.now()}`,
+              orderId: code,
+              sender: 'customer',
+              senderName: sc.customerName || 'زبون الدعم',
+              text: sc.text,
+              createdAt: sc.createdAt || new Date().toISOString(),
+              readByAdmin: true,
+              readByCustomer: false,
+            });
+          }
+        }
+      });
+    } catch {}
+
+    const mergedMsgs = Array.from(msgMap.values());
+    mergedMsgs.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+    setSelectedChatMessages(mergedMsgs);
+    fetchChatThreads();
   };
 
   const handleAdminSendChatMessage = async () => {

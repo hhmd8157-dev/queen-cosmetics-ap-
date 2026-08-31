@@ -46,6 +46,28 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
 
     const supportCode = `SUPP-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const newChatMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      orderId: supportCode,
+      sender: 'customer',
+      senderName: cleanName,
+      customerPhone: cleanPhone,
+      text: cleanMessage,
+      createdAt: new Date().toISOString(),
+      readByAdmin: false,
+      readByCustomer: true,
+    };
+
+    // Save immediately to unified localStorage keys
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.push(newChatMessage);
+        localStorage.setItem(key, JSON.stringify(existing));
+      } catch {}
+    });
+
     try {
       // 1. Post to backend chat API which notifies Telegram and Admin Panel
       const res = await fetch(`/api/chats/${supportCode}/messages`, {
@@ -66,39 +88,15 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
           onSuccessMessage('تم إرسال رسالتك إلى إدارة المتجر بنجاح! سيتم الرد قريباً.');
         }
       } else {
-        // Fallback local storage sync
-        const localChats = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
-        localChats.push({
-          orderId: supportCode,
-          customerName: cleanName,
-          customerPhone: cleanPhone,
-          text: cleanMessage,
-          createdAt: new Date().toISOString(),
-        });
-        localStorage.setItem('queen_pending_support_chats', JSON.stringify(localChats));
         setIsSuccess(true);
         if (onSuccessMessage) {
           onSuccessMessage('تم إرسال رسالتك بنجاح!');
         }
       }
     } catch (err) {
-      // Fallback local storage sync
-      try {
-        const localChats = JSON.parse(localStorage.getItem('queen_pending_support_chats') || '[]');
-        localChats.push({
-          orderId: supportCode,
-          customerName: cleanName,
-          customerPhone: cleanPhone,
-          text: cleanMessage,
-          createdAt: new Date().toISOString(),
-        });
-        localStorage.setItem('queen_pending_support_chats', JSON.stringify(localChats));
-        setIsSuccess(true);
-        if (onSuccessMessage) {
-          onSuccessMessage('تم إرسال رسالتك بنجاح!');
-        }
-      } catch {
-        setErrorMsg('فشل إرسال الرسالة، يرجى المحاولة لاحقاً أو مراسلتنا عبر الواتساب');
+      setIsSuccess(true);
+      if (onSuccessMessage) {
+        onSuccessMessage('تم إرسال رسالتك بنجاح!');
       }
     } finally {
       setIsSubmitting(false);
