@@ -30,6 +30,7 @@ import { getProductImageUrl } from '../utils/image';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { broadcastNewOrderLocally } from '../utils/alerts';
 import { saveOrderPermanently } from '../services/ordersFirestoreService';
+import { sendTelegramDirectClientSide, formatOrderMessageForClient } from '../utils/telegramClient';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -374,6 +375,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
       // 2. Permanently save across Firestore and LocalStorage
       await saveOrderPermanently(confirmedOrder);
+
+      // Direct client-side Telegram dispatch as robust production backup for Vercel/Static hosting
+      sendTelegramDirectClientSide(formatOrderMessageForClient(confirmedOrder)).catch((tgErr) => {
+        console.warn('Direct telegram client send notice:', tgErr);
+      });
 
       // 3. Send email notification in background (non-blocking)
       try {

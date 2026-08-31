@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { sendTelegramDirectClientSide } from '../utils/telegramClient';
+import { deleteOrderEverywhere } from '../services/ordersFirestoreService';
 import {
   X,
   Search,
@@ -281,6 +283,60 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
       onClearActiveOrder();
     }
     onClose();
+  };
+
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelOrderByCustomer = async () => {
+    if (!order) return;
+    if (!window.confirm('هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟ سيتم إبلاغ الإدارة عبر التليجرام وحذف الطلب مباشرة.')) {
+      return;
+    }
+
+    setIsCancelling(true);
+    try {
+      const itemsText = (order.items || [])
+        .map(
+          (item: any, idx: number) =>
+            `  ${idx + 1}. <b>${item.product?.name || 'منتج'}</b>\n     الكمية: <b>${item.quantity}</b> | السعر: ${((item.product?.price || 0) * item.quantity).toLocaleString('en-US')} د.ع`
+        )
+        .join('\n\n');
+
+      const cancelMessage = `❌ <b>تم إلغاء الطلب من قبل الزبون</b>
+━━━━━━━━━━━━━━━━━━━━
+🔖 <b>رقم التتبع:</b> <code>#${order.trackingCode}</code>
+👤 <b>اسم الزبون:</b> <b>${order.customer?.name}</b>
+📞 <b>رقم الهاتف:</b> <code>${order.customer?.phone}</code>
+📍 <b>العنوان:</b> ${order.customer?.governorate} - ${order.customer?.address}
+
+📦 <b>المنتجات:</b>
+${itemsText}
+━━━━━━━━━━━━━━━━━━━━
+💵 <b>المبلغ الإجمالي:</b> <b>${(order.total || 0).toLocaleString('en-US')} د.ع</b>
+<i>تم إلغاء الطلب من قبل الزبون مباشرة عبر الموقع</i> ⚠️`;
+
+      await sendTelegramDirectClientSide(cancelMessage);
+      await deleteOrderEverywhere(order.id || order.trackingCode);
+
+      try {
+        localStorage.removeItem('active_order');
+        localStorage.removeItem('queen_last_order_code');
+      } catch {}
+
+      if (onClearActiveOrder) {
+        onClearActiveOrder();
+      }
+
+      alert('تم إلغاء الطلب بنجاح وتم إبلاغ الإدارة.');
+      setOrder(null);
+      setSearchCode('');
+      onClose();
+    } catch (err) {
+      console.error('Failed to cancel order:', err);
+      alert('حدث خطأ أثناء إلغاء الطلب، يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
   // Auto-fetch and populate from active_order in localStorage on mount / open
@@ -668,14 +724,24 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
                       <span>تم التوصيل بنجاح 🎉</span>
                     </span>
                   ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                      </span>
-                      <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-3 py-1 rounded-full">
-                        مباشر: {STAGES[Math.max(0, currentStageIndex)]?.title}
-                      </span>
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="relative flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                        </span>
+                        <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-3 py-1 rounded-full">
+                          مباشر: {STAGES[Math.max(0, currentStageIndex)]?.title}
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleCancelOrderByCustomer}
+                        disabled={isCancelling}
+                        className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-xs font-bold px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>{isCancelling ? 'جاري الإلغاء...' : '❌ إلغاء الطلب'}</span>
+                      </button>
                     </div>
                   )}
                 </div>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Send, CheckCircle2, MessageSquare, Phone, User, ShieldCheck } from 'lucide-react';
+import { sendTelegramDirectClientSide } from '../utils/telegramClient';
 
 interface SupportContactModalProps {
   isOpen: boolean;
@@ -69,6 +70,12 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
     });
 
     try {
+      // Send direct client-side telegram notification as a robust production backup for Vercel/Static deployments
+      const tgText = `💬 <b>رسالة جديدة من زبون الدعم الفني</b>\n━━━━━━━━━━━━━━━━━━━━\n🔖 <b>رقم الدعم:</b> <code>#${supportCode}</code>\n👤 <b>الاسم:</b> <b>${cleanName}</b>\n📞 <b>الهاتف:</b> <code>${cleanPhone}</code>\n\n✉️ <b>الرسالة:</b>\n${cleanMessage}\n━━━━━━━━━━━━━━━━━━━━\n<i>تم الإرسال من الموقع المباشر</i> ✨`;
+      sendTelegramDirectClientSide(tgText).catch((tgErr) => {
+        console.warn('Direct telegram client send notice:', tgErr);
+      });
+
       // 1. Post to backend chat API which notifies Telegram and Admin Panel
       const res = await fetch(`/api/chats/${supportCode}/messages`, {
         method: 'POST',
@@ -82,16 +89,9 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
         }),
       });
 
-      if (res.ok) {
-        setIsSuccess(true);
-        if (onSuccessMessage) {
-          onSuccessMessage('تم إرسال رسالتك إلى إدارة المتجر بنجاح! سيتم الرد قريباً.');
-        }
-      } else {
-        setIsSuccess(true);
-        if (onSuccessMessage) {
-          onSuccessMessage('تم إرسال رسالتك بنجاح!');
-        }
+      setIsSuccess(true);
+      if (onSuccessMessage) {
+        onSuccessMessage('تم إرسال رسالتك إلى إدارة المتجر بنجاح! سيتم الرد قريباً.');
       }
     } catch (err) {
       setIsSuccess(true);
