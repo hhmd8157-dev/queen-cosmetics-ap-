@@ -23,12 +23,13 @@ import {
   MessageCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { CartItem, CustomerLocation, OrderCustomerDetails } from '../types';
+import { CartItem, CustomerLocation, OrderCustomerDetails, Order } from '../types';
 import { GOVERNORATES, STORE_INFO, formatIQD } from '../data/products';
 import { generateCartWhatsAppUrl } from '../utils/whatsapp';
 import { getProductImageUrl } from '../utils/image';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { broadcastNewOrderLocally } from '../utils/alerts';
+import { saveOrderPermanently } from '../services/ordersFirestoreService';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -273,7 +274,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   }
 
-  // Direct In-App Checkout
+  // Direct In-App Checkout with multi-layer persistence (Firestore + LocalStorage + Backend API)
   const handleDirectCheckout = async () => {
     setFormError('');
 
@@ -298,6 +299,33 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
     setIsSubmitting(true);
 
+    // 1. Prepare reliable order object client-side immediately
+    const localTrackingCode = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
+    const localOrderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    let confirmedOrder: Order = {
+      id: localOrderId,
+      trackingCode: localTrackingCode,
+      items: [...cartItems],
+      customer: {
+        ...customer,
+        governorate: 'العراق',
+        address: finalAddress,
+      },
+      subtotal,
+      deliveryFee,
+      discountAmount,
+      couponCode: appliedCoupon?.code,
+      total: finalTotal,
+      deliveryTiming,
+      customTimingText,
+      location,
+      status: 'received',
+      createdAt: new Date().toISOString(),
+      statusUpdatedAt: new Date().toISOString(),
+      driverNotes: '',
+    };
+
     try {
       const payload = {
         items: cartItems,
@@ -316,24 +344,40 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         location,
       };
 
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+      // Try Backend API safely without breaking if offline, static hosting, or non-JSON response
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'فشل تثبيت الطلب، يرجى المحاولة ثانية');
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const text = await res.text();
+          if (text && text.trim().length > 0) {
+            try {
+              const data = JSON.parse(text);
+              if (data && data.order) {
+                confirmedOrder = data.order;
+              }
+            } catch (jsonErr) {
+              console.warn('Backend response was not JSON:', jsonErr);
+            }
+          }
+        }
+      } catch (apiErr) {
+        console.warn('Backend server /api/orders unreachable, proceeding with client cloud/local storage:', apiErr);
       }
 
-      // إرسال الإشعار لبريد المالك
+      // 2. Permanently save across Firestore and LocalStorage
+      await saveOrderPermanently(confirmedOrder);
+
+      // 3. Send email notification in background (non-blocking)
       try {
         const itemsSummary = cartItems.map((i) => `• ${i.product.name} (عدد: ${i.quantity} - السعر: ${formatIQD(i.product.price)})`).join('\n');
-        
         sendEmailOrderNotification({
           name: customer.name,
           phone: customer.phone,
@@ -343,7 +387,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           notes: customer.notes,
           items: itemsSummary,
           total: formatIQD(finalTotal),
-          trackingCode: data.order?.trackingCode,
+          trackingCode: confirmedOrder.trackingCode,
         }).catch((emailErr) => {
           console.warn('FormSubmit email notification notice:', emailErr);
         });
@@ -351,35 +395,30 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         console.warn('Email notification dispatch notice:', emailErr);
       }
 
-      // Celebratory Confetti!
+      // 4. Celebratory Confetti!
       confetti({
         particleCount: 100,
         spread: 80,
         origin: { y: 0.6 },
       });
 
-      // Clear cart
+      // 5. Clear cart and close drawer
       onClearCart();
       onClose();
 
-      // Save active order to localStorage and broadcast immediately to Father's Dashboard if open
-      if (data.order) {
-        try {
-          localStorage.setItem('active_order', JSON.stringify(data.order));
-          localStorage.setItem('queen_last_order_code', data.order.trackingCode);
-        } catch (e) {
-          console.error('Failed to save active_order in localStorage:', e);
-        }
-        broadcastNewOrderLocally(data.order);
-      }
-
-      // Trigger tracking screen with newly created trackingCode
-      if (data.order?.trackingCode) {
-        onOrderPlaced(data.order.trackingCode, data.order);
-      }
+      // 6. Transition to "تم استلام طلبك بنجاح" tracking screen!
+      onOrderPlaced(confirmedOrder.trackingCode, confirmedOrder);
     } catch (err: any) {
-      console.error('Checkout error:', err);
-      setFormError(err.message || 'حدث خطأ أثناء تثبيت الطلب، يرجى المحاولة مجدداً');
+      console.error('Checkout notice (saving to guaranteed local storage):', err);
+      // Guarantee order is never lost even under extreme conditions
+      try {
+        await saveOrderPermanently(confirmedOrder);
+        onClearCart();
+        onClose();
+        onOrderPlaced(confirmedOrder.trackingCode, confirmedOrder);
+      } catch (fallbackErr) {
+        setFormError('حدث خطأ غير متوقع. يرجى إرسال الطلب عبر واتساب للتأكيد الفوري.');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -844,7 +883,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-[#C5A059]" />
-                  <span>جاري تثبيت الطلب في النظام...</span>
+                  <span>جاري تثبيت وتأكيد الطلب...</span>
                 </>
               ) : (
                 <>
@@ -852,6 +891,29 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span>تأكيد الطلب المباشر ({formatIQD(finalTotal)})</span>
                 </>
               )}
+            </button>
+
+            {/* Direct WhatsApp Ordering Button */}
+            <button
+              type="button"
+              id="cart-whatsapp-order-btn"
+              onClick={async () => {
+                await handleDirectCheckout();
+                const whatsappUrl = generateCartWhatsAppUrl(
+                  cartItems,
+                  customer,
+                  deliveryFee,
+                  appliedCoupon?.code,
+                  discountAmount,
+                  location
+                );
+                window.open(whatsappUrl, '_blank');
+              }}
+              disabled={isSubmitting}
+              className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>أو إرسال الطلب مباشرة عبر واتساب 💬</span>
             </button>
 
             <div className="text-center text-[11px] text-[#888888] flex items-center justify-center gap-2">

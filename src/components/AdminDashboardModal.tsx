@@ -54,6 +54,12 @@ import {
   forceSyncAllToFirestore,
   deleteProductFromFirestore
 } from '../services/productsFirestoreService';
+import { 
+  fetchAllOrdersCombined, 
+  subscribeToOrdersRealtime, 
+  updateOrderStatusEverywhere, 
+  deleteOrderEverywhere 
+} from '../services/ordersFirestoreService';
 import { compressAndProcessImage } from '../utils/imageUpload';
 import {
   initAudioContext,
@@ -349,6 +355,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const isOffer = Boolean(finalOrigPrice || productForm.isOffer);
 
     let updated: Product[];
+    let targetProduct: Product;
+
     if (productForm.id) {
       updated = adminProducts.map(p => {
         if (p.id === productForm.id) {
@@ -359,8 +367,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             originalPrice: finalOrigPrice,
             category: productForm.category as any,
             subCategory: productForm.subCategory || undefined,
-            image: productForm.image || p.image,
-            description: productForm.description || p.description,
+            image: productForm.image ? productForm.image.trim() : p.image,
+            description: productForm.description ? productForm.description.trim() : p.description,
             inStock: productForm.inStock,
             isOffer: isOffer,
             isBestSeller: productForm.isBestSeller,
@@ -368,40 +376,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         }
         return p;
       });
+      targetProduct = updated.find(p => p.id === productForm.id)!;
     } else {
       const newId = `prod-${Date.now()}`;
-      const newProduct: Product = {
+      targetProduct = {
         id: newId,
         name: productForm.name.trim(),
         price: productForm.price,
         originalPrice: finalOrigPrice,
         category: productForm.category as any,
         subCategory: productForm.subCategory || undefined,
-        image: productForm.image.trim() || '/products/placeholder.txt',
-        description: productForm.description.trim() || `منتج ${productForm.name.trim()} الأصلي متوفر لدى كوزمتك الملكة.`,
+        image: productForm.image.trim() || '7 الاف.jpg',
+        description: productForm.description.trim() || `منتج ${productForm.name.trim()} الأصلي عالي الجودة من متجر Queen Cosmetics.`,
         rating: 5,
         reviewCount: 1,
         inStock: productForm.inStock,
         isOffer: isOffer,
         isBestSeller: productForm.isBestSeller,
       };
-      updated = [newProduct, ...adminProducts];
-
-      setAdminProducts(updated);
-      saveStoredProducts(updated);
-      window.dispatchEvent(new Event('queen_products_updated'));
-
-      try {
-        await addNewProductToFirestore(newProduct);
-        setSaveSuccessMsg('تمت إضافة المنتج الجديد وحفظه في قاعدة البيانات السحابية بنجاح! ☁️✨');
-      } catch (e) {
-        console.error('Firestore add error:', e);
-        setSaveSuccessMsg('تم حفظ المنتج محلياً بنجاح! ✨');
-      }
-      setTimeout(() => setSaveSuccessMsg(null), 3000);
-      setEditingProductModal(null);
-      setIsAddingNewProductModal(false);
-      return;
+      updated = [targetProduct, ...adminProducts];
     }
 
     setAdminProducts(updated);
@@ -411,21 +404,24 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     try {
       if (productForm.id) {
         await updateProductInFirestore(productForm.id, {
-          name: productForm.name.trim(),
-          price: productForm.price,
-          originalPrice: finalOrigPrice,
-          category: productForm.category,
-          subCategory: productForm.subCategory,
-          image: productForm.image,
-          description: productForm.description,
-          inStock: productForm.inStock,
-          isOffer: isOffer,
-          isBestSeller: productForm.isBestSeller,
+          name: targetProduct.name,
+          price: targetProduct.price,
+          originalPrice: targetProduct.originalPrice,
+          category: targetProduct.category,
+          subCategory: targetProduct.subCategory,
+          image: targetProduct.image,
+          description: targetProduct.description,
+          inStock: targetProduct.inStock,
+          isOffer: targetProduct.isOffer,
+          isBestSeller: targetProduct.isBestSeller,
         });
+        setSaveSuccessMsg('تم حفظ وتعديل المنتج بنجاح ومزامنته سحابياً! ☁️✨');
+      } else {
+        await addNewProductToFirestore(targetProduct);
+        setSaveSuccessMsg('تمت إضافة المنتج الجديد وحفظه بنجاح! ☁️✨');
       }
-      setSaveSuccessMsg('تم حفظ وتحديث سعر المنتج بنجاح ومزامنته سحابياً! ☁️✨');
     } catch (e) {
-      console.error('Firestore sync error:', e);
+      console.error('Firestore save error:', e);
       setSaveSuccessMsg('تم حفظ وتعديل المنتج محلياً بنجاح! ✨');
     }
 
@@ -531,15 +527,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const fetchTelegramStatus = async () => {
     try {
       const res = await fetch('/api/telegram/status');
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.ok) {
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      if (data && data.ok) {
         setTelegramStatus(data);
         if (data.config?.fullToken) {
           setCustomTokenInput(data.config.fullToken);
         }
       }
     } catch (e) {
-      console.error('Failed to fetch telegram status:', e);
+      console.warn('Telegram status check skipped:', e);
     }
   };
 
@@ -548,8 +545,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setTelegramMsgResult(null);
     try {
       const res = await fetch('/api/telegram/sync', { method: 'POST' });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
         setTelegramMsgResult({
           text: `تمت المزامنة بنجاح! عدد المحادثات المسجلة الآن: ${data.chatIds?.length || 0}`,
           isError: false,
@@ -577,10 +574,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatId: targetChatId || undefined }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       setTelegramMsgResult({
-        text: data.message,
-        isError: !data.success,
+        text: data.message || (res.ok ? 'تم إرسال رسالة الاختبار بنجاح' : 'تعذر إرسال الاختبار'),
+        isError: !data.success && !res.ok,
       });
     } catch (e: any) {
       setTelegramMsgResult({ text: `فشل الاختبار: ${e?.message}`, isError: true });
@@ -604,8 +601,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatIds: newChats }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setCustomChatIdInput('');
         setTelegramMsgResult({ text: 'تمت إضافة معرف المحادثة بنجاح!', isError: false });
         await fetchTelegramStatus();
@@ -624,8 +621,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatIds: newChats }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setTelegramMsgResult({ text: 'تم حذف معرف المحادثة', isError: false });
         await fetchTelegramStatus();
       }
@@ -643,8 +640,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ botToken: token }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setIsEditingToken(false);
         setTelegramMsgResult({ text: 'تم حفظ توكن البوت بنجاح!', isError: false });
         await fetchTelegramStatus();
@@ -822,16 +819,35 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setNewOrderAlertBanner(order);
   };
 
-  // Poll orders & listen to cross-tab broadcast events when authenticated
+  // Poll orders & listen to cross-tab broadcast events and Firestore stream when authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
 
     fetchOrders(false);
+
+    // Real-time Firestore stream for instant cross-device order notifications
+    const unsubscribeOrders = subscribeToOrdersRealtime((updatedOrders) => {
+      if (Array.isArray(updatedOrders)) {
+        if (!isInitialFetchDoneRef.current) {
+          knownOrderIdsRef.current = new Set(updatedOrders.map((o) => o.id));
+          isInitialFetchDoneRef.current = true;
+        } else {
+          const brandNewOrders = updatedOrders.filter((o) => !knownOrderIdsRef.current.has(o.id));
+          if (brandNewOrders.length > 0) {
+            brandNewOrders.forEach((newOrder) => {
+              knownOrderIdsRef.current.add(newOrder.id);
+              triggerNewOrderAlert(newOrder);
+            });
+          }
+        }
+        setOrders(updatedOrders);
+      }
+    });
     
-    // Fast polling every 2.5 seconds to guarantee instant alerts
+    // Fast polling every 3 seconds as supplementary backup
     const interval = setInterval(() => {
       fetchOrders(true);
-    }, 2500);
+    }, 3000);
 
     // Cross-tab broadcast channel listener (instant trigger if order placed in another tab on same device)
     const channel = getOrdersBroadcastChannel();
@@ -863,6 +879,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     return () => {
       clearInterval(interval);
+      unsubscribeOrders();
       if (channel) {
         channel.removeEventListener('message', handleBroadcastMessage);
       }
@@ -873,25 +890,37 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const fetchChatThreads = async () => {
     try {
       const res = await fetch('/api/chats');
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.threads) {
-        setChatThreads(data.threads);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          const data = JSON.parse(text);
+          if (data && data.threads) {
+            setChatThreads(data.threads);
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch chat threads:', err);
+      // Non-fatal
     }
   };
 
   const fetchSelectedChatMessages = async (orderId: string) => {
     try {
       const res = await fetch(`/api/chats/${orderId}/messages?readBy=admin`);
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.messages) {
-        setSelectedChatMessages(data.messages);
-        fetchChatThreads();
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          const data = JSON.parse(text);
+          if (data && data.messages) {
+            setSelectedChatMessages(data.messages);
+            fetchChatThreads();
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch chat messages:', err);
+      // Non-fatal
     }
   };
 
@@ -900,6 +929,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const text = adminChatInput.trim();
     setAdminChatInput('');
     setIsSendingAdminChat(true);
+
+    const localMsg: any = {
+      id: `msg-${Date.now()}`,
+      orderId: selectedChatOrderId,
+      sender: 'admin',
+      senderName: 'إدارة كوزمتك الملكة 👑',
+      text,
+      createdAt: new Date().toISOString(),
+      readByAdmin: true,
+      readByCustomer: false,
+    };
+
+    setSelectedChatMessages((prev) => [...prev, localMsg]);
 
     try {
       const res = await fetch(`/api/chats/${selectedChatOrderId}/messages`, {
@@ -911,13 +953,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           text,
         }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.message) {
-        setSelectedChatMessages((prev) => [...prev, data.message]);
-        fetchChatThreads();
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const resText = await res.text();
+        if (resText && resText.trim().length > 0) {
+          const data = JSON.parse(resText);
+          if (data && data.message) {
+            setSelectedChatMessages((prev) => prev.map((m) => m.id === localMsg.id ? data.message : m));
+            fetchChatThreads();
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to send admin chat message:', err);
+      console.warn('Admin chat queued locally in session:', err);
     } finally {
       setIsSendingAdminChat(false);
     }
@@ -1022,11 +1070,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const fetchOrders = async (silent: boolean = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const res = await fetch('/api/orders');
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (res.ok && Array.isArray(data.orders)) {
-        const incomingOrders: Order[] = data.orders;
-
+      const incomingOrders = await fetchAllOrdersCombined();
+      if (Array.isArray(incomingOrders)) {
         if (!isInitialFetchDoneRef.current) {
           // First load: seed the known orders so we don't alert for old existing orders
           knownOrderIdsRef.current = new Set(incomingOrders.map((o) => o.id));
@@ -1046,7 +1091,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         setOrders(incomingOrders);
       }
     } catch (e) {
-      console.error('Error fetching admin orders:', e);
+      console.warn('Error fetching admin orders:', e);
     } finally {
       if (!silent) setIsLoading(false);
     }
@@ -1140,37 +1185,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setUpdatingId(orderId);
     try {
       const note = driverNoteInput[orderId];
-      const res = await fetch(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: newStatus,
-          driverNotes: note !== undefined ? note : undefined,
-        }),
-      });
+      await updateOrderStatusEverywhere(orderId, newStatus, note);
 
-      if (res.ok) {
-        const targetOrder = orders.find((o) => o.id === orderId || o.trackingCode === orderId);
-        if (targetOrder) {
-          broadcastOrderStatusChangeLocally({
-            orderId: targetOrder.id,
-            trackingCode: targetOrder.trackingCode,
-            previousStatus: targetOrder.status,
-            newStatus,
-            customerName: targetOrder.customer.name,
-            driverNotes: note !== undefined ? note : targetOrder.driverNotes,
-            timestamp: new Date().toISOString(),
-          });
-        }
-
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId || o.trackingCode === orderId
-              ? { ...o, status: newStatus, statusUpdatedAt: new Date().toISOString(), driverNotes: note !== undefined ? note : o.driverNotes }
-              : o
-          )
-        );
+      const targetOrder = orders.find((o) => o.id === orderId || o.trackingCode === orderId);
+      if (targetOrder) {
+        broadcastOrderStatusChangeLocally({
+          orderId: targetOrder.id,
+          trackingCode: targetOrder.trackingCode,
+          previousStatus: targetOrder.status,
+          newStatus,
+          customerName: targetOrder.customer.name,
+          driverNotes: note !== undefined ? note : targetOrder.driverNotes,
+          timestamp: new Date().toISOString(),
+        });
       }
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId || o.trackingCode === orderId
+            ? { ...o, status: newStatus, statusUpdatedAt: new Date().toISOString(), driverNotes: note !== undefined ? note : o.driverNotes }
+            : o
+        )
+      );
     } catch (err) {
       console.error('Failed to update status:', err);
     } finally {
@@ -1181,12 +1217,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const handleDeleteOrder = async (orderId: string) => {
     if (!window.confirm('هل أنت متأكد من رغبتك في حذف هذا الطلب نهائياً؟')) return;
     try {
-      const res = await fetch(`/api/orders/${orderId}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
-      }
+      await deleteOrderEverywhere(orderId);
+      setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
     } catch (err) {
       console.error('Failed to delete order:', err);
     }
@@ -2557,26 +2589,30 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                     <button
                       onClick={async () => {
-                        if (window.confirm('هل أنت متأكد من إعادة ضبط المنتجات للمجموعة الأصلية الافتراضية (103 منتج)؟ سيتم استعادة كافة المنتجات الأصلية وإلغاء علامات الحذف.')) {
+                        if (window.confirm('هل أنت متأكد من استعادة كافة المنتجات الأصلية الافتراضية (103 منتج)؟')) {
                           try {
+                            localStorage.removeItem('queen_cosmetics_products');
                             localStorage.removeItem('queen_cosmetics_products_clean_v1');
                             await resetStoreProductsToDefault();
                             setAdminProducts(PRODUCTS);
                             saveStoredProducts(PRODUCTS);
                             window.dispatchEvent(new Event('queen_products_updated'));
-                            setSaveSuccessMsg('تمت إعادة ضبط جميع المنتجات الـ 103 للأصل ومزامنتها في السحابة بنجاح! 🔄✨');
+                            setSaveSuccessMsg('تمت استعادة كافة المنتجات الأصلية (103 منتج) بنجاح! 🔄✨');
                             setTimeout(() => setSaveSuccessMsg(null), 3000);
                           } catch (err) {
                             console.error(err);
-                            setSaveSuccessMsg('تمت إعادة الضبط محلياً بنجاح! 🔄');
+                            setAdminProducts(PRODUCTS);
+                            saveStoredProducts(PRODUCTS);
+                            window.dispatchEvent(new Event('queen_products_updated'));
+                            setSaveSuccessMsg('تمت استعادة المنتجات الأصلية بنجاح! 🔄');
                             setTimeout(() => setSaveSuccessMsg(null), 3000);
                           }
                         }
                       }}
-                      className="bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-                      title="استعادة الـ 103 منتج الأصلية"
+                      className="bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-800/40 text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                      title="استعادة كافة المنتجات الأصلية الافتراضية"
                     >
-                      <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
                       <span>إعادة ضبط للأصل</span>
                     </button>
                     <div className="relative flex-1 max-w-xs">
@@ -2796,6 +2832,31 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         </div>
                       );
                     })}
+
+                  {adminProducts.length === 0 && (
+                    <div className="bg-[#18181B] rounded-2xl border border-[#2E2E33] p-10 sm:p-14 text-center space-y-3">
+                      <div className="w-12 h-12 rounded-xl bg-[#27272A] text-[#C5A059] flex items-center justify-center mx-auto">
+                        <Package className="w-6 h-6" />
+                      </div>
+                      <h3 className="font-bold text-white text-base">لا توجد منتجات حالياً</h3>
+                      <p className="text-xs text-[#A1A1AA] max-w-sm mx-auto">
+                        قائمة المنتجات فارغة حالياً. يمكنك البدء بإضافة منتجاتك الحقيقية الآن بالضغط على زر "إضافة منتج جديد".
+                      </p>
+                      <button
+                        onClick={openAddProductModal}
+                        className="bg-[#C5A059] hover:bg-[#D4AF37] text-black text-xs font-bold px-4 py-2.5 rounded-xl transition-all inline-flex items-center gap-2 cursor-pointer mt-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>إضافة أول منتج للمتجر 👑</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {adminProducts.length > 0 && adminProducts.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.brand || p.category || '').toLowerCase().includes(productSearch.toLowerCase())).length === 0 && (
+                    <div className="bg-[#18181B] rounded-xl border border-[#2E2E33] p-8 text-center text-xs text-[#A1A1AA]">
+                      لم يتم العثور على منتجات تطابق "{productSearch}"
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

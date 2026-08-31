@@ -204,7 +204,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         >
           {!imgError && product.image ? (
             <img 
-              src={`/products/${encodeURIComponent(product.image.replace(/^\/?(products\/)+/, ''))}`} 
+              src={getProductImageUrl(product)} 
               alt={product.name} 
               className="w-full h-full object-contain p-1 transition-none filter-none"
               style={{ imageRendering: 'auto', filter: 'none', transform: 'none' }}
@@ -486,7 +486,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       >
         {!imgError && product.image ? (
           <img 
-            src={`/products/${encodeURIComponent(product.image.replace(/^\/?(products\/)+/, ''))}`} 
+            src={getProductImageUrl(product)} 
             alt={product.name} 
             className="w-full h-full object-contain p-1 transition-none filter-none"
             style={{ imageRendering: 'auto', filter: 'none', transform: 'none' }}

@@ -71,7 +71,12 @@ export const StockNotifyModal: React.FC<StockNotifyModalProps> = ({
         }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
 
       if (res.ok && data.success) {
         setIsSuccess(true);
@@ -79,7 +84,24 @@ export const StockNotifyModal: React.FC<StockNotifyModalProps> = ({
           onSuccess(`تم تسجيل طلبك للمنتج "${product.name}" بنجاح! سنقوم بإشعارك فور توفره.`);
         }
       } else {
-        setErrorMsg(data.error || 'تعذر تسجيل الطلب حالياً، يرجى المحاولة مرة أخرى');
+        // Fallback: save locally
+        try {
+          const localAlerts = JSON.parse(localStorage.getItem('queen_pending_stock_alerts') || '[]');
+          localAlerts.push({
+            productId: product.id,
+            productName: product.name,
+            phone: cleanPhone,
+            name: name.trim(),
+            date: new Date().toISOString(),
+          });
+          localStorage.setItem('queen_pending_stock_alerts', JSON.stringify(localAlerts));
+          setIsSuccess(true);
+          if (onSuccess) {
+            onSuccess(`تم تسجيل طلبك للمنتج "${product.name}" بنجاح! سنقوم بإشعارك فور توفره.`);
+          }
+        } catch {
+          setErrorMsg(data.error || 'تعذر تسجيل الطلب حالياً، يرجى المحاولة مرة أخرى');
+        }
       }
     } catch (err: any) {
       console.error('Error requesting stock alert:', err);

@@ -29,12 +29,40 @@
         "tags": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["id", "name", "price", "category", "inStock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order record with delivery details and live tracking status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "trackingCode": { "type": "string" },
+        "customer": { "type": "object" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "total": { "type": "number" },
+        "deliveryTiming": { "type": "string" },
+        "customTimingText": { "type": "string" },
+        "location": { "type": "object" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "statusUpdatedAt": { "type": "string" },
+        "driverNotes": { "type": "string" }
+      },
+      "required": ["id", "trackingCode", "customer", "items", "total", "status"]
     }
   },
   "firestore": {
     "/products/{productId}": {
       "schema": "Product",
       "description": "Collection of all store products"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of all customer purchase orders"
     }
   }
 }

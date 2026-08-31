@@ -1,4 +1,4 @@
-import { CartItem, CustomerLocation, OrderCustomerDetails, Product } from '../types';
+import { CartItem, CustomerLocation, OrderCustomerDetails, Product, Order } from '../types';
 import { STORE_INFO, formatIQD } from '../data/products';
 
 /**
@@ -68,8 +68,39 @@ export function generateCartWhatsAppUrl(
 }
 
 /**
- * Creates a direct 1-click WhatsApp order URL for an individual product
+ * Creates a direct WhatsApp confirmation URL for an already placed Order
  */
+export function generateOrderConfirmationWhatsAppUrl(order: Order): string {
+  let message = `👑 *تأكيد طلب جديد - كوزمتك الملكة* 👑\n`;
+  message += `━━━━━━━━━━━━━━━━━━━━\n`;
+  message += `🔖 *رمز التتبع:* #${order.trackingCode}\n\n`;
+
+  message += `👤 *بيانات المستلم:* \n`;
+  message += `• الاسم: ${order.customer.name || 'غير محدد'}\n`;
+  message += `• الهاتف: ${order.customer.phone || 'غير محدد'}\n`;
+  if (order.customer.address) {
+    message += `• العنوان: ${order.customer.address}\n`;
+  }
+  if (order.location?.mapUrl) {
+    message += `🗺️ موقع GPS: ${order.location.mapUrl}\n`;
+  }
+  if (order.deliveryTiming) {
+    message += `⏰ وقت التوصيل: ${order.deliveryTiming}\n`;
+  }
+
+  message += `\n🛍️ *المنتجات المطلوبة:* \n`;
+  order.items.forEach((item, idx) => {
+    message += `${idx + 1}. ${item.product.name} (عدد: ${item.quantity}) - ${formatIQD(item.product.price * item.quantity)}\n`;
+  });
+
+  message += `━━━━━━━━━━━━━━━━━━━━\n`;
+  message += `💰 *المجموع النهائي:* *${formatIQD(order.total)}*\n`;
+  message += `✨ يرجى تأكيد استلام هذا الطلب والبدء بالتجهيز. شكراً!`;
+
+  const encoded = encodeURIComponent(message);
+  return `https://wa.me/${STORE_INFO.whatsappNumber}?text=${encoded}`;
+}
+
 export function generateSingleProductWhatsAppUrl(
   product: Product,
   quantity: number = 1,

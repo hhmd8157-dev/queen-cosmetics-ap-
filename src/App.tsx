@@ -13,13 +13,14 @@ import { AiAssistantWidget } from './components/AiAssistantWidget';
 import { LiveOrderTrackerModal } from './components/LiveOrderTrackerModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { StockNotifyModal } from './components/StockNotifyModal';
+import { SupportContactModal } from './components/SupportContactModal';
 import { OrderStatusPushToast, PushStatusNotification } from './components/OrderStatusPushToast';
 import { Footer } from './components/Footer';
 import { FloatingWhatsApp } from './components/FloatingWhatsApp';
-import { PRODUCTS, STORE_INFO, formatIQD, getStoredProducts, CATEGORIES, getStoredCategories } from './data/products';
+import { PRODUCTS, STORE_INFO, formatIQD, getStoredProducts, saveStoredProducts, CATEGORIES, getStoredCategories } from './data/products';
 import { subscribeToProductsRealtime } from './services/productsFirestoreService';
 import { CartItem, CategoryId, Product, OrderStatus } from './types';
-import { Sparkles, MessageCircle, ArrowLeft, Heart, ShoppingBag, Check, Bike, ClipboardList, Sun, Moon, BellRing } from 'lucide-react';
+import { Sparkles, MessageCircle, ArrowLeft, Heart, ShoppingBag, Check, Bike, ClipboardList, Sun, Moon, BellRing, Package } from 'lucide-react';
 import { ThemeMode, getInitialTheme, toggleThemeMode, applyTheme } from './utils/theme';
 import { playStatusNotificationSound, getOrdersBroadcastChannel } from './utils/alerts';
 
@@ -27,7 +28,6 @@ export default function App() {
   // Theme mode persisted state
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
 
-  // Apply theme on load and sync
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
@@ -102,6 +102,7 @@ export default function App() {
   
   // Tracking & Admin Modals
   const [isTrackerOpen, setIsTrackerOpen] = useState<boolean>(false);
+  const [isSupportOpen, setIsSupportOpen] = useState<boolean>(false);
   const [activeTrackingCode, setActiveTrackingCode] = useState<string>('');
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
     return window.location.pathname === '/admin' || window.location.hash === '#admin';
@@ -335,20 +336,20 @@ export default function App() {
     showToast('تم مسح قائمة المفضلة', 'info');
   };
 
-  const [productsList, setProductsList] = useState<Product[]>(() => getStoredProducts());
+  const [productsList, setProductsList] = useState<Product[]>(() => getStoredProducts().filter(p => p.image && p.image.trim() !== ''));
   const [categories, setCategories] = useState(() => getStoredCategories());
 
   useEffect(() => {
     // 1. Subscribe to real-time Firestore cloud database updates
     const unsubscribe = subscribeToProductsRealtime((updatedProducts) => {
-      if (updatedProducts && updatedProducts.length > 0) {
-        setProductsList(updatedProducts);
+      if (Array.isArray(updatedProducts)) {
+        setProductsList(updatedProducts.filter(p => p.image && p.image.trim() !== ''));
       }
     });
 
     // 2. Also listen for fast local storage updates
     const handleLocalUpdate = () => {
-      setProductsList(getStoredProducts());
+      setProductsList(getStoredProducts().filter(p => p.image && p.image.trim() !== ''));
     };
     window.addEventListener('queen_products_updated', handleLocalUpdate);
 
@@ -485,7 +486,6 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenTracker={() => setIsTrackerOpen(true)}
-        onOpenAdmin={handleOpenAdmin}
         theme={theme}
         onToggleTheme={handleToggleTheme}
       />
@@ -652,7 +652,26 @@ export default function App() {
         )}
 
         {/* Product Grid or Empty State */}
-        {filteredProducts.length === 0 ? (
+        {productsList.length === 0 ? (
+          <div className="bg-white dark:bg-[#141418] rounded-2xl border border-[#EAEAEA] dark:border-[#27272A] p-10 sm:p-14 text-center space-y-4 max-w-md mx-auto my-8 shadow-xs">
+            <div className="w-16 h-16 bg-[#FAF8F5] dark:bg-[#1C1C22] border border-[#EAEAEA] dark:border-[#2E2E35] text-[#C5A059] rounded-2xl flex items-center justify-center mx-auto text-3xl shadow-inner">
+              <Package className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-bold text-[#1A1A1A] dark:text-white text-lg">لا توجد منتجات حالياً</h3>
+              <p className="text-xs text-[#71717A] dark:text-[#A1A1AA] leading-relaxed">
+                لم يتم إضافة أي منتجات إلى المتجر بعد. يمكنك إضافة منتجاتك الحقيقية من لوحة التحكم.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsAdminOpen(true)}
+              className="bg-[#C5A059] hover:bg-[#D4AF37] text-black text-xs font-bold px-5 py-2.5 rounded-xl transition-all shadow-sm inline-flex items-center gap-2 cursor-pointer hover:scale-105"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>إضافة منتج من لوحة التحكم 👑</span>
+            </button>
+          </div>
+        ) : filteredProducts.length === 0 ? (
           selectedCategory === 'mixtures' ? (
             <div className="bg-gradient-to-b from-[#1C140E] via-[#241A13] to-[#18181B] rounded-2xl border border-[#C5A059]/40 p-8 sm:p-12 text-center space-y-5 max-w-lg mx-auto my-8 shadow-xl text-white">
               <div className="w-16 h-16 bg-[#C5A059]/20 border border-[#C5A059]/50 text-[#FFE58F] rounded-2xl flex items-center justify-center mx-auto text-3xl shadow-inner">
@@ -681,24 +700,25 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-[#E4E4E7] p-12 text-center space-y-4 max-w-md mx-auto my-8 shadow-xs">
-              <div className="w-14 h-14 bg-[#F4F4F5] border border-[#E4E4E7] text-[#71717A] rounded-2xl flex items-center justify-center mx-auto">
+            <div className="bg-white dark:bg-[#141418] rounded-2xl border border-[#E4E4E7] dark:border-[#27272A] p-12 text-center space-y-4 max-w-md mx-auto my-8 shadow-xs">
+              <div className="w-14 h-14 bg-[#F4F4F5] dark:bg-[#1C1C22] border border-[#E4E4E7] dark:border-[#2E2E35] text-[#71717A] dark:text-[#A1A1AA] rounded-2xl flex items-center justify-center mx-auto">
                 <ShoppingBag className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h3 className="font-bold text-[#18181B] text-base">لم يتم العثور على منتجات في هذا القسم</h3>
-                <p className="text-xs text-[#71717A]">
+                <h3 className="font-bold text-[#18181B] dark:text-white text-base">لم يتم العثور على منتجات في هذا القسم</h3>
+                <p className="text-xs text-[#71717A] dark:text-[#A1A1AA]">
                   جرّب تصفح باقي الأقسام أو استخدام شريط البحث.
                 </p>
               </div>
               <button
                 onClick={() => {
-                  setSelectedCategory('bestsellers');
+                  setSelectedCategory('all');
+                  setSelectedSubCategory('all');
                   setSearchQuery('');
                 }}
-                className="bg-[#18181B] text-[#FFE58F] border border-[#D4AF37] text-xs font-bold px-5 py-2.5 rounded-xl hover:bg-[#27272A] transition-all cursor-pointer shadow-xs"
+                className="bg-[#18181B] dark:bg-[#27272A] text-[#FFE58F] border border-[#D4AF37] text-xs font-bold px-5 py-2.5 rounded-xl hover:bg-[#27272A] transition-all cursor-pointer shadow-xs"
               >
-                العودة إلى الأكثر مبيعاً
+                عرض كل المنتجات
               </button>
             </div>
           )
@@ -746,7 +766,7 @@ export default function App() {
       <Footer 
         onSelectCategory={setSelectedCategory} 
         onOpenTracker={() => setIsTrackerOpen(true)}
-        onOpenAdmin={handleOpenAdmin}
+        onOpenSupport={() => setIsSupportOpen(true)}
       />
 
       {/* Floating WhatsApp Action Button */}
@@ -838,6 +858,15 @@ export default function App() {
         onClose={() => setIsTrackerOpen(false)}
         initialTrackingCode={activeTrackingCode}
         onClearActiveOrder={handleClearActiveOrder}
+      />
+
+      {/* Support & Contact Message Modal */}
+      <SupportContactModal
+        isOpen={isSupportOpen}
+        onClose={() => setIsSupportOpen(false)}
+        onSuccessMessage={(msg) => {
+          showToast(msg, 'success');
+        }}
       />
 
       {/* Father's Admin Delivery & Orders Management Dashboard Modal (Hidden route /admin or #admin) */}

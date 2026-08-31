@@ -13,7 +13,7 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const CONFIG_FILE = path.join(DATA_DIR, 'telegram_config.json');
 
 const DEFAULT_TOKEN = '8730831848:AAHJ7xkm6CKTH1X-1afTNNbmL9f4nkru9t4'.trim();
-const DEFAULT_CHAT_IDS = ['7355854532'.trim()];
+const DEFAULT_CHAT_IDS: string[] = [];
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -279,6 +279,7 @@ export async function sendTelegramNotification(order: any): Promise<{
   let sentCount = 0;
   let failedCount = 0;
   const errors: string[] = [];
+  let configChanged = false;
 
   for (const chatId of recipients) {
     try {
@@ -301,12 +302,20 @@ export async function sendTelegramNotification(order: any): Promise<{
         failedCount++;
         errors.push(`Chat ${chatId}: ${data.description || 'Failed'}`);
         console.warn(`[Telegram] Failed to send to chat ${chatId}:`, data.description);
+        if (data.description && (data.description.includes('Unauthorized') || data.description.includes('Forbidden') || data.description.includes('chat not found'))) {
+          updatedConfig.chatIds = updatedConfig.chatIds.filter(id => id !== chatId);
+          configChanged = true;
+        }
       }
     } catch (err: any) {
       failedCount++;
       errors.push(`Chat ${chatId}: ${err?.message || 'Network error'}`);
       console.error(`[Telegram] Error sending to chat ${chatId}:`, err);
     }
+  }
+
+  if (configChanged) {
+    saveTelegramConfig(updatedConfig);
   }
 
   return {

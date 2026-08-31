@@ -46,9 +46,11 @@ import {
 import { Order, OrderStatus } from '../types';
 import { formatIQD, STORE_INFO } from '../data/products';
 import { getProductImageUrl } from '../utils/image';
+import { generateOrderConfirmationWhatsAppUrl } from '../utils/whatsapp';
 import { StatusAnimatedIcon } from './StatusAnimatedIcon';
 import confetti from 'canvas-confetti';
 import { getOrdersBroadcastChannel } from '../utils/alerts';
+import { findOrderByCode } from '../services/ordersFirestoreService';
 
 interface LiveOrderTrackerModalProps {
   isOpen: boolean;
@@ -175,14 +177,20 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
     try {
       const url = `/api/chats/${code}/messages${markRead ? '?readBy=customer' : ''}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.messages) {
-        setChatMessages(data.messages);
-        const unread = data.messages.filter((m: any) => m.sender === 'admin' && !m.readByCustomer).length;
-        setUnreadChatCount(unread);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          const data = JSON.parse(text);
+          if (data && data.messages) {
+            setChatMessages(data.messages);
+            const unread = data.messages.filter((m: any) => m.sender === 'admin' && !m.readByCustomer).length;
+            setUnreadChatCount(unread);
+          }
+        }
       }
     } catch (err) {
-      console.error("Error fetching chat messages:", err);
+      // Chat background polling fail is non-fatal
     }
   };
 
@@ -192,6 +200,24 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
     const text = chatInput.trim();
     setChatInput('');
     setIsSendingChat(true);
+
+    const localMsg: any = {
+      id: `msg-${Date.now()}`,
+      orderId: order.id,
+      trackingCode: order.trackingCode,
+      sender: 'customer',
+      senderName: order.customer.name,
+      text,
+      createdAt: new Date().toISOString(),
+      readByAdmin: false,
+      readByCustomer: true,
+    };
+
+    setChatMessages((prev) => [...prev, localMsg]);
+    setUnreadChatCount(0);
+    setTimeout(() => {
+      chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
 
     try {
       const res = await fetch(`/api/chats/${order.trackingCode}/messages`, {
@@ -203,16 +229,18 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
           text,
         }),
       });
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
-      if (data.message) {
-        setChatMessages((prev) => [...prev, data.message]);
-        setUnreadChatCount(0);
-        setTimeout(() => {
-          chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const resText = await res.text();
+        if (resText && resText.trim().length > 0) {
+          const data = JSON.parse(resText);
+          if (data && data.message) {
+            setChatMessages((prev) => prev.map((m) => m.id === localMsg.id ? data.message : m));
+          }
+        }
       }
     } catch (err) {
-      console.error("Error sending chat message:", err);
+      console.warn("Notice: Chat message saved locally in current session:", err);
     } finally {
       setIsSendingChat(false);
     }
@@ -371,22 +399,21 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
     }
 
     try {
-      const res = await fetch(`/api/orders/track/${encodeURIComponent(cleanCode)}`);
-      if (!res.ok) throw new Error("HTTP error " + res.status); const data = await res.json();
+      const foundOrder = await findOrderByCode(cleanCode);
 
-      if (!res.ok) {
-        throw new Error(data.error || 'لم يتم العثور على الطلب');
+      if (foundOrder) {
+        setOrder(foundOrder);
+        setError('');
+        try {
+          localStorage.setItem('active_order', JSON.stringify(foundOrder));
+          localStorage.setItem('queen_last_order_code', foundOrder.trackingCode);
+        } catch (e) {
+          console.error(e);
+        }
+        return;
       }
 
-      setOrder(data.order);
-      setError('');
-      // Save full active_order and code to localStorage
-      try {
-        localStorage.setItem('active_order', JSON.stringify(data.order));
-        localStorage.setItem('queen_last_order_code', data.order.trackingCode);
-      } catch (e) {
-        console.error(e);
-      }
+      throw new Error('لم يتم العثور على طلب بهذا الرمز. تأكد من إدخال الرمز بشكل صحيح.');
     } catch (err: any) {
       if (!silent) {
         setError(err.message || 'حدث خطأ أثناء البحث عن الطلب');
@@ -1193,11 +1220,21 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
                   className="w-full sm:w-auto bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <ShoppingBag className="w-4 h-4" />
-                  <span>إلغاء التتبع / طلب جديد</span>
+                  <span>طلب جديد</span>
                 </button>
 
+                <a
+                  href={generateOrderConfirmationWhatsAppUrl(order)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full sm:w-auto bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>إرسال الطلب عبر واتساب للتأكيد الفوري 💬</span>
+                </a>
+
                 <div className="text-center text-xs text-[#888888] dark:text-[#A1A1AA]">
-                  <span>تواصل عبر الواتساب: </span>
+                  <span>واتساب المتجر: </span>
                   <a
                     href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent(`مرحباً كوزمتك الملكة، أود الاستفسار عن طلبي برقم #${order.trackingCode}`)}`}
                     target="_blank"

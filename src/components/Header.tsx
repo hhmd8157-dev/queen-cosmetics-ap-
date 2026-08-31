@@ -25,7 +25,6 @@ interface HeaderProps {
   onOpenCart: () => void;
   onOpenWishlist: () => void;
   onOpenTracker: () => void;
-  onOpenAdmin?: () => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
 }
@@ -38,7 +37,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
   onOpenWishlist,
   onOpenTracker,
-  onOpenAdmin,
   theme,
   onToggleTheme,
 }) => {
@@ -155,18 +153,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">تتبع الطلب</span>
             </button>
 
-            {/* Admin Dashboard Quick Button */}
-            {onOpenAdmin && (
-              <button
-                id="header-admin-btn"
-                onClick={onOpenAdmin}
-                className="flex items-center gap-1.5 bg-[#FAFAFA] dark:bg-[#18181B] hover:bg-[#F0F0F0] dark:hover:bg-[#222228] text-stone-700 dark:text-stone-200 border border-[#EAEAEA] dark:border-[#2E2E33] px-3 sm:px-3.5 py-2 rounded-full text-xs font-bold transition-all shadow-2xs cursor-pointer hover:border-[#D4AF37] hover:scale-105"
-                title="لوحة تحكم الإدارة"
-              >
-                <ShieldCheck className="w-4 h-4 text-[#D4AF37]" />
-                <span className="hidden md:inline text-xs">الإدارة 👑</span>
-              </button>
-            )}
+
 
             {/* AI Advisor Quick Button */}
             <button
