@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { sendTelegramDirectClientSide } from '../utils/telegramClient';
 import { deleteOrderEverywhere } from '../services/ordersFirestoreService';
+import { subscribeToChatRealtime, sendChatMessageToFirestore } from '../services/chatsFirestoreService';
 import {
   X,
   Search,
@@ -253,6 +254,13 @@ ${text}
       sendTelegramDirectClientSide(tgText).catch(() => {});
     } catch {}
 
+    // Cloud sync chat message
+    try {
+      await sendChatMessageToFirestore(localMsg);
+    } catch (err) {
+      console.warn('Chat cloud sync error:', err);
+    }
+
     setTimeout(() => {
       chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
@@ -478,6 +486,25 @@ ${itemsText}
       window.removeEventListener('queen_order_status_change', handleStatusChange);
     };
   }, [order?.trackingCode, order?.status, searchCode]);
+
+  // Chat Firestore Sync
+  useEffect(() => {
+    if (!order?.trackingCode) return;
+    const unsubscribe = subscribeToChatRealtime(order.trackingCode, (msgs) => {
+      if (msgs && msgs.length > 0) {
+        setChatMessages(msgs);
+        // Only mark as read if the tab is active and we are in chat view
+        if (activeTab === 'chat' && isOpen) {
+          setUnreadChatCount(0);
+        } else {
+          // Calculate unread by finding messages where readByCustomer is false
+          const unread = msgs.filter(m => m.sender === 'admin' && !m.readByCustomer).length;
+          setUnreadChatCount(unread);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [order?.trackingCode, activeTab, isOpen]);
 
   const fetchOrder = async (codeToFetch: string, silent: boolean = false) => {
     const cleanCode = codeToFetch.trim();

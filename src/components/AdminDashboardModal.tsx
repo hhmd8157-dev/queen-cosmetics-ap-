@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Copy,
   Check,
+  CheckCheck,
   RefreshCw,
   Trash2,
   Lock,
@@ -45,22 +46,30 @@ import { Order, OrderStatus, Product, Category } from '../types';
 import { formatIQD, STORE_INFO, getStoredProducts, saveStoredProducts, CATEGORIES, getStoredCategories, saveStoredCategories, PRODUCTS } from '../data/products';
 import { getProductImageUrl } from '../utils/image';
 import { 
-  updateProductPricingInFirestore, 
-  toggleProductStockInFirestore, 
-  updateProductInFirestore,
-  addNewProductToFirestore,
-  subscribeToProductsRealtime,
-  resetStoreProductsToDefault,
-  forceSyncAllToFirestore,
-  deleteProductFromFirestore
-} from '../services/productsFirestoreService';
-import { 
-  fetchAllOrdersCombined, 
-  subscribeToOrdersRealtime, 
   updateOrderStatusEverywhere, 
   deleteOrderEverywhere,
-  getLocalOrders
+  subscribeToOrdersRealtime 
 } from '../services/ordersFirestoreService';
+import { 
+  saveProductToFirestore, 
+  deleteProductFromFirestore,
+  subscribeToProductsRealtime,
+  updateProductPricingInFirestore,
+  toggleProductStockInFirestore,
+  updateProductInFirestore,
+  addNewProductToFirestore,
+  resetStoreProductsToDefault,
+  forceSyncAllToFirestore
+} from '../services/productsFirestoreService';
+import {
+  saveCategoryToFirestore,
+  deleteCategoryFromFirestore,
+  subscribeToCategoriesRealtime
+} from '../services/categoriesFirestoreService';
+import {
+  subscribeToChatRealtime,
+  markChatAsReadByAdmin
+} from '../services/chatsFirestoreService';
 import { compressAndProcessImage } from '../utils/imageUpload';
 import {
   initAudioContext,
@@ -178,6 +187,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setAdminCategories(updated);
     saveStoredCategories(updated);
     
+    // Cloud sync categories
+    saveCategoryToFirestore(newCategory).catch(console.error);
+    
     setNewCatNameAr('');
     setNewCatId('');
     setNewCatSubs('');
@@ -200,6 +212,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const updated = adminCategories.filter(c => c.id !== catId);
     setAdminCategories(updated);
     saveStoredCategories(updated);
+    
+    // Cloud sync delete
+    deleteCategoryFromFirestore(catId).catch(console.error);
     
     setSaveSuccessMsg('تم حذف القسم بنجاح! 🗑️');
     setTimeout(() => setSaveSuccessMsg(null), 3000);
@@ -226,7 +241,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     price: 10000,
     originalPrice: 12000,
     discountPercent: 17,
-    category: 'perfumes',
+    category: 'عطور',
     subCategory: '',
     image: '',
     description: '',
@@ -241,7 +256,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       price: 10000,
       originalPrice: 12000,
       discountPercent: 17,
-      category: 'perfumes',
+      category: 'عطور',
       subCategory: '',
       image: '',
       description: '',
@@ -436,7 +451,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       setAdminProducts(getStoredProducts());
       const unsubscribe = subscribeToProductsRealtime((latestProducts) => {
         if (latestProducts && latestProducts.length > 0) {
-          setAdminProducts(latestProducts);
+          // Merge with local products to preserve local-only additions
+          const localProducts = getStoredProducts();
+          const productMap = new Map<string, Product>();
+          
+          localProducts.forEach(p => productMap.set(p.id, p));
+          latestProducts.forEach(p => productMap.set(p.id, p));
+          
+          setAdminProducts(Array.from(productMap.values()));
         }
       });
       return () => unsubscribe();
@@ -1114,6 +1136,40 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   const totalUnreadChatsCount = chatThreads.reduce((acc, t) => acc + (t.unreadCount || 0), 0);
 
+  const handleMarkAllMessagesAsRead = () => {
+    if (!window.confirm('هل تريد مسح كافة إشعارات المحادثات وتصفير العداد؟')) return;
+    
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        const updated = localItems.map((m: any) => ({ ...m, readByAdmin: true }));
+        localStorage.setItem(key, JSON.stringify(updated));
+      } catch {}
+    });
+    fetchChatThreads();
+    setSaveSuccessMsg('تم تصفير كافة إشعارات المحادثات بنجاح! ✅');
+    setTimeout(() => setSaveSuccessMsg(null), 3000);
+  };
+
+  const markThreadAsRead = (orderId: string) => {
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        const updated = localItems.map((m: any) => {
+          const code = (m.orderId || m.trackingCode || '').toUpperCase();
+          if (code === orderId.toUpperCase()) {
+            return { ...m, readByAdmin: true };
+          }
+          return m;
+        });
+        localStorage.setItem(key, JSON.stringify(updated));
+      } catch {}
+    });
+    fetchChatThreads();
+  };
+
   // Poll chats & SSE event listener for instant chat alerts
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1309,13 +1365,20 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     try {
       const note = driverNoteInput[orderId];
       
-      // If status is delivered, we want to remove it from the active view/state as requested
-      if (newStatus === 'delivered') {
-        // Update everywhere first (this marks it as delivered in Firestore/Backend)
-        await updateOrderStatusEverywhere(orderId, newStatus, note);
-        
-        // Update local state: remove from the current view list
+      // If status is delivered or cancelled, delete immediately as requested by user to zero out stats
+      if (newStatus === 'delivered' || newStatus === 'cancelled') {
+        await deleteOrderEverywhere(orderId);
         setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
+        
+        // Broadcast deletion so other tabs sync
+        try {
+          const channel = new BroadcastChannel('queen_orders_channel');
+          channel.postMessage({ type: 'ORDER_DELETED', payload: { orderId } });
+          channel.close();
+        } catch {}
+        
+        setSaveSuccessMsg(newStatus === 'delivered' ? 'تم توصيل الطلب وحذفه من القائمة بنجاح! ✅' : 'تم إلغاء الطلب وحذفه بنجاح! 🗑️');
+        setTimeout(() => setSaveSuccessMsg(null), 3000);
         setUpdatingId(null);
         return;
       }
@@ -1415,6 +1478,18 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
   });
 
   // Calculate stats
+  // Sync categories from cloud
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const unsubscribe = subscribeToCategoriesRealtime((cloudCats) => {
+      if (cloudCats && cloudCats.length > 0) {
+        setAdminCategories(cloudCats);
+        saveStoredCategories(cloudCats);
+      }
+    });
+    return () => unsubscribe();
+  }, [isAuthenticated]);
+
   const stats = {
     total: orders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled').length,
     received: orders.filter((o) => o.status === 'received').length,
@@ -1865,7 +1940,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 }`}
               >
                 <Package className="w-4 h-4" />
-                <span>إدارة الطلبات ({orders.length})</span>
+                <span>إدارة الطلبات ({stats.total})</span>
               </button>
 
               <button
@@ -1970,6 +2045,13 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                   <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                     <button
+                      onClick={handleMarkAllMessagesAsRead}
+                      className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold px-3.5 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCheck className="w-3.5 h-3.5" />
+                      <span>تصفير الإشعارات</span>
+                    </button>
+                    <button
                       onClick={fetchChatThreads}
                       className="bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] border border-[#D4AF37]/40 font-bold px-3.5 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
                     >
@@ -2019,6 +2101,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                               onClick={() => {
                                 setSelectedChatOrderId(thread.orderId);
                                 fetchSelectedChatMessages(thread.orderId);
+                                markThreadAsRead(thread.orderId);
                               }}
                               className={`p-3.5 rounded-xl border cursor-pointer transition-all space-y-2 ${
                                 isSelected

@@ -17,8 +17,9 @@ import { SupportContactModal } from './components/SupportContactModal';
 import { OrderStatusPushToast, PushStatusNotification } from './components/OrderStatusPushToast';
 import { Footer } from './components/Footer';
 import { FloatingWhatsApp } from './components/FloatingWhatsApp';
-import { PRODUCTS, STORE_INFO, formatIQD, getStoredProducts, saveStoredProducts, CATEGORIES, getStoredCategories } from './data/products';
+import { PRODUCTS, STORE_INFO, formatIQD, getStoredProducts, saveStoredProducts, CATEGORIES, getStoredCategories, saveStoredCategories } from './data/products';
 import { subscribeToProductsRealtime } from './services/productsFirestoreService';
+import { subscribeToCategoriesRealtime } from './services/categoriesFirestoreService';
 import { CartItem, CategoryId, Product, OrderStatus } from './types';
 import { Sparkles, MessageCircle, ArrowLeft, Heart, ShoppingBag, Check, Bike, ClipboardList, Sun, Moon, BellRing, Package } from 'lucide-react';
 import { ThemeMode, getInitialTheme, toggleThemeMode, applyTheme } from './utils/theme';
@@ -341,9 +342,29 @@ export default function App() {
 
   useEffect(() => {
     // 1. Subscribe to real-time Firestore cloud database updates
-    const unsubscribe = subscribeToProductsRealtime((updatedProducts) => {
+    const unsubscribeProds = subscribeToProductsRealtime((updatedProducts) => {
       if (Array.isArray(updatedProducts)) {
-        setProductsList(updatedProducts.filter(p => p.image && p.image.trim() !== ''));
+        // Merge Firestore products with local storage products to ensure local additions/overrides are preserved
+        const localProducts = getStoredProducts();
+        const productMap = new Map<string, Product>();
+        
+        // Start with local products (which include static + custom)
+        localProducts.forEach(p => productMap.set(p.id, p));
+        
+        // Overlay Firestore products (latest cloud truth)
+        updatedProducts.forEach(p => {
+          productMap.set(p.id, p);
+        });
+        
+        const merged = Array.from(productMap.values());
+        setProductsList(merged.filter(p => p.image && p.image.trim() !== ''));
+      }
+    });
+
+    const unsubscribeCats = subscribeToCategoriesRealtime((updatedCategories) => {
+      if (Array.isArray(updatedCategories) && updatedCategories.length > 0) {
+        setCategories(updatedCategories);
+        saveStoredCategories(updatedCategories);
       }
     });
 
@@ -359,7 +380,8 @@ export default function App() {
     window.addEventListener('queen_categories_updated', handleCategoriesUpdate);
 
     return () => {
-      unsubscribe();
+      unsubscribeProds();
+      unsubscribeCats();
       window.removeEventListener('queen_products_updated', handleLocalUpdate);
       window.removeEventListener('queen_categories_updated', handleCategoriesUpdate);
     };
