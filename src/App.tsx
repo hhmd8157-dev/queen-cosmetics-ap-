@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion } from 'motion/react';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
 import { CategoryFilter } from './components/CategoryFilter';
@@ -24,6 +25,30 @@ import { CartItem, CategoryId, Product, OrderStatus } from './types';
 import { Sparkles, MessageCircle, ArrowLeft, Heart, ShoppingBag, Check, Bike, ClipboardList, Sun, Moon, BellRing, Package } from 'lucide-react';
 import { ThemeMode, getInitialTheme, toggleThemeMode, applyTheme } from './utils/theme';
 import { playStatusNotificationSound, getOrdersBroadcastChannel } from './utils/alerts';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05
+    }
+  }
+} as const;
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 30 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      type: 'spring' as const,
+      damping: 25,
+      stiffness: 260,
+      duration: 0.3
+    }
+  }
+} as const;
 
 export default function App() {
   // Theme mode persisted state
@@ -362,9 +387,21 @@ export default function App() {
     });
 
     const unsubscribeCats = subscribeToCategoriesRealtime((updatedCategories) => {
-      if (Array.isArray(updatedCategories) && updatedCategories.length > 0) {
-        setCategories(updatedCategories);
-        saveStoredCategories(updatedCategories);
+      if (Array.isArray(updatedCategories)) {
+        // Merge with static categories to prevent loss of defaults
+        const categoryMap = new Map<string, any>();
+        
+        // Start with default static categories
+        CATEGORIES.forEach(cat => categoryMap.set(cat.id, cat));
+        
+        // Overlay cloud categories
+        updatedCategories.forEach(cat => {
+          categoryMap.set(cat.id, cat);
+        });
+        
+        const merged = Array.from(categoryMap.values());
+        setCategories(merged);
+        saveStoredCategories(merged);
       }
     });
 
@@ -746,6 +783,7 @@ export default function App() {
           )
         ) : (
           <div 
+            key={`${selectedCategory}-${selectedSubCategory}-${sortBy}-${searchQuery}-${viewMode}`}
             id="products-display-container"
             className={
               viewMode === 'grid'
@@ -753,24 +791,36 @@ export default function App() {
                 : 'flex flex-col gap-3.5 sm:gap-4'
             }
           >
-            {filteredProducts.map((product) => {
+            {filteredProducts.map((product, index) => {
               const cartItem = cart.find((i) => i.product.id === product.id);
               const isInWishlist = wishlist.some((p) => p.id === product.id);
 
               return (
-                <ProductCard
+                <motion.div 
                   key={product.id}
-                  product={product}
-                  isInWishlist={isInWishlist}
-                  onToggleWishlist={handleToggleWishlist}
-                  cartQuantity={cartItem ? cartItem.quantity : 0}
-                  onAddToCart={handleAddToCart}
-                  onUpdateCartQuantity={handleUpdateCartQuantity}
-                  onQuickView={(p) => setQuickViewProduct(p)}
-                  onQuickPeek={(p) => setQuickPeekProduct(p)}
-                  onRequestStockAlert={handleOpenStockAlert}
-                  viewMode={viewMode}
-                />
+                  initial={{ opacity: 0, y: 40, scale: 0.96 }}
+                  whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                  viewport={{ once: false, amount: 0.1 }}
+                  transition={{ 
+                    type: "spring", 
+                    stiffness: 60, 
+                    damping: 20,
+                    delay: (index % 4) * 0.04
+                  }}
+                >
+                  <ProductCard
+                    product={product}
+                    isInWishlist={isInWishlist}
+                    onToggleWishlist={handleToggleWishlist}
+                    cartQuantity={cartItem ? cartItem.quantity : 0}
+                    onAddToCart={handleAddToCart}
+                    onUpdateCartQuantity={handleUpdateCartQuantity}
+                    onQuickView={(p) => setQuickViewProduct(p)}
+                    onQuickPeek={(p) => setQuickPeekProduct(p)}
+                    onRequestStockAlert={handleOpenStockAlert}
+                    viewMode={viewMode}
+                  />
+                </motion.div>
               );
             })}
           </div>

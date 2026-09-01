@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { 
   Heart, 
   ShoppingBag, 
@@ -169,7 +170,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   if (viewMode === 'list') {
     return (
-      <div
+      <motion.div
         id={`product-card-list-${product.id}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -177,6 +178,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        whileHover={{ scale: 1.015 }}
+        whileTap={{ scale: 0.985 }}
         className={`group bg-white dark:bg-[#141418] rounded-2xl border transition-all duration-300 flex flex-col sm:flex-row gap-4 p-3.5 sm:p-4 relative select-none overflow-hidden ${
           isHolding
             ? 'ring-2 ring-[#C5A059] scale-[0.99] border-[#C5A059] shadow-xl'
@@ -446,12 +449,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <span>تفاصيل المنتج</span>
           </button>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div 
+    <motion.div 
       id={`product-card-${product.id}`}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -459,6 +462,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
       className={`group bg-white dark:bg-[#141418] rounded-xl border transition-all duration-300 flex flex-col justify-between overflow-hidden p-3.5 relative select-none ${
         isHolding
           ? 'ring-2 ring-[#C5A059] scale-[0.98] border-[#C5A059] shadow-xl'
@@ -744,6 +749,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

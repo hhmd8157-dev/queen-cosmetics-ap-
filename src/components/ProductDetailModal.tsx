@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { 
   X, 
   Star, 
@@ -114,8 +115,16 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 animate-fade-in">
-      <div 
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ scale: 0.94, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', damping: 26, stiffness: 320 }}
         className="relative bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-[#F4F4F5] w-full max-w-4xl rounded-2xl shadow-2xl border border-[#EAEAEA] dark:border-[#27272A] overflow-hidden my-auto max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -455,7 +464,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           {/* Customer Reviews Section */}
           <ProductReviewsSection product={product} />
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

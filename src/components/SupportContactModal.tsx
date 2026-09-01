@@ -53,6 +53,7 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
       sender: 'customer',
       senderName: cleanName,
       customerPhone: cleanPhone,
+      governorate: 'العراق',
       text: cleanMessage,
       createdAt: new Date().toISOString(),
       readByAdmin: false,
@@ -68,6 +69,14 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
         localStorage.setItem(key, JSON.stringify(existing));
       } catch {}
     });
+
+    // Cloud Sync
+    try {
+      const { sendChatMessageToFirestore } = await import('../services/chatsFirestoreService');
+      await sendChatMessageToFirestore(newChatMessage as any);
+    } catch (err) {
+      console.warn('Chat cloud sync error:', err);
+    }
 
     // Broadcast new chat message event for Admin Panel (same tab & other tabs)
     try {

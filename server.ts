@@ -13,6 +13,8 @@ import {
   sendStockAlertTelegramNotification,
   sendChatMessageTelegramNotification,
   getBotMe,
+  startTelegramPolling,
+  sendAdminReplyTelegramNotification,
 } from "./server/telegram";
 import { queueEmailNotification } from "./server/mailer";
 
@@ -846,6 +848,14 @@ async function startServer() {
         } catch (err) {
           console.error("Failed to enqueue email notification:", err);
         }
+      } else {
+        // Send a telegram notification of the admin's reply to keep the Telegram history synced
+        sendAdminReplyTelegramNotification({
+          orderId: code,
+          text: newMsg.text,
+        }).catch((err) => {
+          console.error("Failed to sync Admin reply to Telegram:", err);
+        });
       }
 
       return res.status(201).json({
@@ -855,6 +865,54 @@ async function startServer() {
     } catch (error: any) {
       console.error("Post chat message error:", error);
       return res.status(500).json({ error: "فشل إرسال الرسالة" });
+    }
+  });
+
+  // 4. Delete a chat thread (Admin only)
+  app.delete("/api/chats/:orderId", (req: Request, res: Response) => {
+    try {
+      const code = req.params.orderId?.trim().toUpperCase();
+      if (!code) {
+        return res.status(400).json({ error: "رمز الطلب غير صالح" });
+      }
+
+      chatsCache = chatsCache.filter((m) => m.orderId.toUpperCase() !== code);
+      saveChatsToFile();
+
+      // Broadcast update
+      broadcastSSEEvent("CHAT_THREAD_DELETED", { orderId: code });
+
+      return res.json({ success: true, message: "تم حذف المحادثة بنجاح" });
+    } catch (error: any) {
+      console.error("Delete chat error:", error);
+      return res.status(500).json({ error: "فشل حذف المحادثة" });
+    }
+  });
+
+  // 5. Mark thread as resolved / answered (Admin only)
+  app.post("/api/chats/:orderId/resolve", (req: Request, res: Response) => {
+    try {
+      const code = req.params.orderId?.trim().toUpperCase();
+      if (!code) {
+        return res.status(400).json({ error: "رمز الطلب غير صالح" });
+      }
+
+      // Mark all messages as read by admin and customer to clear notifications
+      chatsCache.forEach((msg) => {
+        if (msg.orderId.toUpperCase() === code) {
+          msg.readByAdmin = true;
+          msg.readByCustomer = true;
+        }
+      });
+      saveChatsToFile();
+
+      // Broadcast update
+      broadcastSSEEvent("CHAT_THREAD_RESOLVED", { orderId: code });
+
+      return res.json({ success: true, message: "تم تعليم المحادثة كمجابة بنجاح" });
+    } catch (error: any) {
+      console.error("Resolve chat error:", error);
+      return res.status(500).json({ error: "فشل تعليم المحادثة كمجابة" });
     }
   });
 
@@ -1217,6 +1275,50 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Start Telegram Bot polling gateway
+  startTelegramPolling((orderId, text, senderName) => {
+    const code = orderId.trim().toUpperCase();
+    const textTrimmed = text.trim();
+
+    // Check if we already have this exact message in chatsCache to avoid duplicates
+    const isDuplicate = chatsCache.some(m => 
+      m.orderId.toUpperCase() === code && 
+      m.sender === 'admin' && 
+      m.text.trim() === textTrimmed &&
+      Math.abs(Date.now() - new Date(m.createdAt).getTime()) < 5000
+    );
+
+    if (isDuplicate) return;
+
+    const newMsg: ChatMessageRecord = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      orderId: code,
+      sender: 'admin',
+      senderName: senderName || 'إدارة كوزمتك الملكة 👑',
+      text: textTrimmed,
+      createdAt: new Date().toISOString(),
+      readByAdmin: true,
+      readByCustomer: false,
+    };
+
+    chatsCache.push(newMsg);
+    saveChatsToFile();
+
+    // Find corresponding order to get customer name
+    const order = ordersCache.find(
+      (o) => o.trackingCode.toUpperCase() === code || o.id.toUpperCase() === code
+    );
+
+    // Broadcast in real-time to SSE clients
+    broadcastSSEEvent("NEW_CHAT_MESSAGE", {
+      orderId: code,
+      message: newMsg,
+      customerName: order?.customer.name || 'الزبون',
+    });
+
+    console.log(`[Telegram Chat Gateway] Saved and broadcasted reply for ${code}: "${textTrimmed}"`);
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Queen Cosmetics server running on http://0.0.0.0:${PORT}`);

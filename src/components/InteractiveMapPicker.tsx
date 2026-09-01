@@ -138,7 +138,9 @@ export const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
     );
   };
 
-  const handleConfirmLocation = () => {
+  const handleConfirmLocation = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     setValidationError('');
     const mapUrl = `https://www.google.com/maps?q=${lat},${lng}`;
     const locationObj: CustomerLocation = {
@@ -162,8 +164,14 @@ export const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in">
-      <div className="bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-[#F4F4F5] rounded-2xl max-w-2xl w-full shadow-2xl border border-[#EAEAEA] dark:border-[#27272A] overflow-hidden flex flex-col max-h-[90vh]">
+    <div 
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
+    >
+      <div 
+        className="bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-[#F4F4F5] rounded-2xl max-w-2xl w-full shadow-2xl border border-[#EAEAEA] dark:border-[#27272A] overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="px-5 py-4 border-b border-[#EAEAEA] dark:border-[#27272A] flex items-center justify-between bg-[#FAFAFA] dark:bg-[#18181C]">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-[#C5A059]/10 text-[#C5A059] flex items-center justify-center">
@@ -175,7 +183,8 @@ export const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
             className="w-8 h-8 rounded-full bg-white dark:bg-[#202026] border border-[#EAEAEA] dark:border-[#2E2E35] text-[#666666] dark:text-[#A1A1AA] hover:text-[#1A1A1A] dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -273,14 +282,14 @@ export const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
         <div className="px-5 py-3 border-t border-[#EAEAEA] dark:border-[#27272A] bg-[#FAFAFA] dark:bg-[#18181C] flex items-center justify-end gap-2.5">
           <button
             type="button"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
             className="px-4 py-2 rounded-lg border border-[#EAEAEA] dark:border-[#2E2E35] text-[#666666] dark:text-[#A1A1AA] hover:bg-white dark:hover:bg-[#202026] text-xs font-semibold transition-colors cursor-pointer"
           >
             إلغاء
           </button>
           <button
             type="button"
-            onClick={handleConfirmLocation}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleConfirmLocation(e); }}
             className="bg-[#C5A059] hover:bg-[#B38F4D] text-white text-xs font-bold px-6 py-2 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
           >
             <Check className="w-4 h-4" />

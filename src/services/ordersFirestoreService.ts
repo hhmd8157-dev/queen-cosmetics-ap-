@@ -199,46 +199,42 @@ export async function findOrderByCode(codeToFind: string): Promise<Order | null>
  * Fetches all orders merging Backend API, Firestore, and LocalStorage
  */
 export async function fetchAllOrdersCombined(): Promise<Order[]> {
-  const map = new Map<string, Order>();
-
-  // 1. Load LocalStorage orders first for fast render
-  getLocalOrders().forEach((o) => {
-    map.set(o.id || o.trackingCode, o);
-  });
-
-  // 2. Load Firestore orders
+  // 1. Try Firestore first
   try {
     const querySnapshot = await getDocs(collection(db, ORDERS_COLLECTION));
+    const cloudOrders: Order[] = [];
     querySnapshot.forEach((d) => {
       const data = d.data() as Order;
       if (data && data.trackingCode) {
-        map.set(data.id || data.trackingCode, { ...data, id: d.id });
+        cloudOrders.push({ ...data, id: d.id });
       }
     });
+    
+    cloudOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveLocalOrders(cloudOrders);
+    return cloudOrders;
   } catch (firestoreErr) {
     console.warn('Firestore orders fetch notice:', firestoreErr);
   }
 
-  // 3. Try Backend API
+  // 2. Try Backend API as secondary fallback
   try {
     const res = await fetch('/api/orders');
     const contentType = res.headers.get('content-type') || '';
     if (res.ok && contentType.includes('application/json')) {
       const data = await res.json().catch(() => null);
       if (data && Array.isArray(data.orders)) {
-        data.orders.forEach((o: Order) => {
-          map.set(o.id || o.trackingCode, o);
-        });
+        data.orders.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        saveLocalOrders(data.orders);
+        return data.orders;
       }
     }
   } catch (serverErr) {
     // Silent
   }
 
-  const all = Array.from(map.values());
-  all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  saveLocalOrders(all);
-  return all;
+  // 3. Fallback to LocalStorage only if both cloud and server are unreachable
+  return getLocalOrders();
 }
 
 /**
@@ -247,7 +243,7 @@ export async function fetchAllOrdersCombined(): Promise<Order[]> {
 export function subscribeToOrdersRealtime(onUpdate: (orders: Order[]) => void): Unsubscribe {
   const colRef = collection(db, ORDERS_COLLECTION);
 
-  // Send local orders immediately
+  // Send local orders immediately for instant startup
   const localOrders = getLocalOrders();
   if (localOrders.length > 0) {
     onUpdate(localOrders);
@@ -256,27 +252,20 @@ export function subscribeToOrdersRealtime(onUpdate: (orders: Order[]) => void): 
   const unsubscribe = onSnapshot(
     colRef,
     (snapshot) => {
-      const cloudMap = new Map<string, Order>();
+      const cloudOrders: Order[] = [];
 
       snapshot.docs.forEach((d) => {
         const data = d.data() as Order;
         if (data && data.trackingCode) {
-          cloudMap.set(data.id || data.trackingCode, { ...data, id: d.id });
+          cloudOrders.push({ ...data, id: d.id });
         }
       });
 
-      // Merge with any offline local orders
-      const currentLocal = getLocalOrders();
-      currentLocal.forEach((o) => {
-        if (!cloudMap.has(o.id || o.trackingCode)) {
-          cloudMap.set(o.id || o.trackingCode, o);
-        }
-      });
-
-      const merged = Array.from(cloudMap.values());
-      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      saveLocalOrders(merged);
-      onUpdate(merged);
+      cloudOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      // Save latest cloud truth to LocalStorage as cache
+      saveLocalOrders(cloudOrders);
+      onUpdate(cloudOrders);
     },
     (err) => {
       console.warn('Firestore orders onSnapshot notice (offline mode active):', err);

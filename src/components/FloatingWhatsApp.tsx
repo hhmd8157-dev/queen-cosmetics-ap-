@@ -26,7 +26,7 @@ export const FloatingWhatsApp: React.FC = () => {
         href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود الاستفسار والطلب')}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="w-12 h-12 rounded-full bg-[#25D366] hover:bg-[#20bd5a] text-white flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 cursor-pointer relative"
+        className="w-12 h-12 rounded-full bg-[#25D366] hover:bg-[#20bd5a] text-white flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 cursor-pointer relative animate-gold-pulse"
         title="تواصل معنا عبر الواتساب"
       >
         <MessageCircle className="w-6 h-6 fill-current" />

@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { X, Trash2, ShoppingBag, Heart, MessageCircle, ArrowRight } from 'lucide-react';
 import { Product } from '../types';
 import { formatIQD } from '../data/products';
@@ -27,8 +28,16 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-xs flex justify-end animate-fade-in">
-      <div 
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-xs flex justify-end"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        transition={{ type: 'spring', damping: 30, stiffness: 320 }}
         className="w-full max-w-md bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-[#F4F4F5] h-full shadow-2xl flex flex-col justify-between overflow-hidden border-r border-[#EAEAEA] dark:border-[#27272A]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -168,7 +177,7 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
             </button>
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

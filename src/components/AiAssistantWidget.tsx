@@ -25,6 +25,7 @@ interface Message {
   content: string;
   timestamp: string;
   isError?: boolean;
+  status?: 'loading' | 'sent' | 'failed';
 }
 
 const QUICK_PROMPTS = [
@@ -82,6 +83,7 @@ export const AiAssistantWidget: React.FC = () => {
       role: 'user',
       content: text,
       timestamp: new Date().toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' }),
+      status: 'loading',
     };
 
     // Prepare previous history (excluding error messages and initial greeting)
@@ -127,7 +129,9 @@ export const AiAssistantWidget: React.FC = () => {
         timestamp: new Date().toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' }),
       };
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      setMessages((prev) =>
+        prev.map((m): Message => (m.id === userMsgId ? { ...m, status: 'sent' } : m)).concat(assistantMsg)
+      );
     } catch (err: any) {
       console.error('AI chat live request failed:', err);
 
@@ -139,7 +143,9 @@ export const AiAssistantWidget: React.FC = () => {
         isError: true,
       };
 
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) =>
+        prev.map((m): Message => (m.id === userMsgId ? { ...m, status: 'failed' } : m)).concat(errorMessage)
+      );
     } finally {
       setIsLoading(false);
     }
@@ -345,8 +351,19 @@ export const AiAssistantWidget: React.FC = () => {
                       )}
 
                       {isUser && (
-                        <div className="text-[10px] text-[#121214]/70 text-left mt-1">
-                          {msg.timestamp}
+                        <div className="text-[10px] text-[#121214]/75 text-left mt-1 flex items-center justify-end gap-1 font-medium">
+                          <span>{msg.timestamp}</span>
+                          {msg.status === 'loading' && (
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin text-[#121214]/60" />
+                          )}
+                          {msg.status === 'sent' && (
+                            <Check className="w-2.5 h-2.5 text-emerald-800" />
+                          )}
+                          {msg.status === 'failed' && (
+                            <span title="فشل في الإرسال">
+                              <AlertCircle className="w-2.5 h-2.5 text-rose-800 animate-pulse" />
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>

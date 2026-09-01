@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { 
   X, 
   Star, 
@@ -89,17 +90,18 @@ export const QuickPeekModal: React.FC<QuickPeekModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-sm animate-in fade-in duration-200">
-      {/* Backdrop overlay */}
-      <div 
-        className="absolute inset-0" 
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-xs"
+      onClick={onClose}
+    >
       {/* Quick Peek Card Container */}
-      <div 
-        className="relative w-full max-w-lg bg-white dark:bg-[#141418] border border-[#EAEAEA] dark:border-[#2A2A32] rounded-2xl shadow-2xl overflow-hidden z-10 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
+      <motion.div 
+        initial={{ scale: 0.94, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+        className="relative w-full max-w-lg bg-white dark:bg-[#141418] border border-[#EAEAEA] dark:border-[#2A2A32] rounded-2xl shadow-2xl overflow-hidden z-10 flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Bar */}
@@ -356,7 +358,7 @@ export const QuickPeekModal: React.FC<QuickPeekModalProps> = ({
           </div>
 
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
+import { CartSpendChart } from './CartSpendChart';
 import { 
   X, 
   Trash2, 
@@ -117,7 +119,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const finalTotal = Math.max(0, subtotal - discountAmount) + deliveryFee;
 
   // Handle GPS location retrieval
-  const handleGetLocation = () => {
+  const handleGetLocation = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     setLocationError('');
     if (!navigator.geolocation) {
       setLocationError('المتصفح لا يدعم تحديد الموقع الجغرافي تلقائياً');
@@ -178,7 +182,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     );
   };
 
-  const handleApplyCoupon = () => {
+  const handleApplyCoupon = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     setCouponError('');
     const cleanCode = couponCode.trim().toUpperCase();
 
@@ -193,7 +199,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
-  const handleRemoveCoupon = () => {
+  const handleRemoveCoupon = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     setAppliedCoupon(null);
     setCouponCode('');
     setCouponError('');
@@ -276,7 +284,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   }
 
   // Direct In-App Checkout with multi-layer persistence (Firestore + LocalStorage + Backend API)
-  const handleDirectCheckout = async () => {
+  const handleDirectCheckout = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     setFormError('');
 
     if (!customer.name.trim()) {
@@ -436,8 +446,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end animate-fade-in">
-      <div 
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        transition={{ type: 'spring', damping: 30, stiffness: 320 }}
         className="w-full max-w-lg bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-[#F4F4F5] h-full shadow-2xl flex flex-col justify-between overflow-hidden border-r border-[#EAEAEA] dark:border-[#27272A]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -456,7 +474,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           <div className="flex items-center gap-3">
             {cartItems.length > 0 && (
               <button
-                onClick={onClearCart}
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClearCart(); }}
                 className="text-xs text-[#A1A1AA] hover:text-rose-400 cursor-pointer transition-colors"
                 title="تفريغ السلة"
               >
@@ -465,7 +484,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             )}
 
             <button
-              onClick={onClose}
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
               className="p-1.5 text-[#A1A1AA] hover:text-white rounded-full transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -591,6 +611,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
+              {/* D3 Purchase Budget Distribution Pie Chart */}
+              <CartSpendChart cartItems={cartItems} />
+
               {/* Coupon Code Section */}
               <div className="bg-[#FAFAFA] dark:bg-[#1A1A20] p-3 rounded-xl border border-[#EAEAEA] dark:border-[#27272A] space-y-2">
                 <label className="text-xs font-medium text-[#1A1A1A] dark:text-white flex items-center gap-1.5">
@@ -605,7 +628,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       تم تطبيق الكوبون ({appliedCoupon.code})
                     </span>
                     <button
-                      onClick={handleRemoveCoupon}
+                      type="button"
+                      onClick={(e) => handleRemoveCoupon(e)}
                       className="text-[#999999] dark:text-[#A1A1AA] hover:text-rose-600 text-xs font-medium underline cursor-pointer"
                     >
                       إلغاء
@@ -621,7 +645,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       className="flex-1 bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-white border border-[#EAEAEA] dark:border-[#2E2E35] focus:border-[#C5A059] rounded-lg px-3 py-2 text-xs outline-hidden"
                     />
                     <button
-                      onClick={handleApplyCoupon}
+                      type="button"
+                      onClick={(e) => handleApplyCoupon(e)}
                       className="bg-[#1A1A1A] dark:bg-[#C5A059] hover:bg-[#333333] dark:hover:bg-[#D4AF37] text-white dark:text-black font-semibold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0"
                     >
                       تطبيق
@@ -715,7 +740,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               type="button"
-                              onClick={handleGetLocation}
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleGetLocation(e); }}
                               disabled={isLocating}
                               className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors text-[11px] font-semibold cursor-pointer"
                             >
@@ -737,7 +762,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           <span>Lat: {location.latitude}, Lng: {location.longitude}</span>
                           <button
                             type="button"
-                            onClick={() => setIsMapPickerOpen(true)}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsMapPickerOpen(true); }}
                             className="text-[10px] underline text-emerald-800 dark:text-emerald-300 hover:text-black font-sans cursor-pointer"
                           >
                             فتح الخريطة للتعديل 🗺️
@@ -748,7 +773,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       <div className="space-y-2">
                         <button
                           type="button"
-                          onClick={handleGetLocation}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleGetLocation(e); }}
                           disabled={isLocating}
                           className="w-full bg-gradient-to-r from-[#C5A059] via-[#D4AF37] to-[#C5A059] hover:from-[#B38F4D] hover:to-[#B38F4D] text-black font-extrabold text-xs py-3.5 px-4 rounded-xl flex items-center justify-center gap-2.5 transition-all shadow-md cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-70"
                         >
@@ -767,7 +792,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
                         <button
                           type="button"
-                          onClick={() => setIsMapPickerOpen(true)}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsMapPickerOpen(true); }}
                           className="w-full text-center text-[11px] text-[#666666] dark:text-[#A1A1AA] hover:text-[#C5A059] underline cursor-pointer py-1"
                         >
                           أو فتح الخريطة وسحب الدبوس يدوياً 🗺️
@@ -800,7 +825,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         <button
                           key={timing.id}
                           type="button"
-                          onClick={() => setDeliveryTiming(timing.id as any)}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeliveryTiming(timing.id as any); }}
                           className={`py-2 px-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer text-center ${
                             deliveryTiming === timing.id
                               ? 'bg-[#1A1A1A] dark:bg-[#C5A059] text-[#FFE58F] dark:text-black border-[#1A1A1A] dark:border-[#C5A059] shadow-xs font-bold'
@@ -881,8 +906,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
             {/* Direct In-App Checkout Button */}
             <button
+              type="button"
               id="cart-direct-checkout-btn"
-              onClick={handleDirectCheckout}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDirectCheckout(e); }}
               disabled={isSubmitting}
               className="w-full bg-gradient-to-r from-[#1A1A1A] to-[#2E2E33] hover:from-black hover:to-[#1A1A1A] text-white font-bold text-sm py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-black/10 transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
             >
@@ -903,8 +929,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <button
               type="button"
               id="cart-whatsapp-order-btn"
-              onClick={async () => {
-                await handleDirectCheckout();
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await handleDirectCheckout(e);
                 const whatsappUrl = generateCartWhatsAppUrl(
                   cartItems,
                   customer,
@@ -931,7 +959,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </div>
           </div>
         )}
-      </div>
+      </motion.div>
 
       {/* Interactive Map Picker Modal */}
       <InteractiveMapPicker
@@ -945,6 +973,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           houseDetails: customer.houseDetails || '',
         }}
       />
-    </div>
+    </motion.div>
   );
 };

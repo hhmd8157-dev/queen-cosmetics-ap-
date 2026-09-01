@@ -40,7 +40,8 @@ import {
   Bot,
   Tag,
   Plus,
-  Edit3
+  Edit3,
+  ArrowRight
 } from 'lucide-react';
 import { Order, OrderStatus, Product, Category } from '../types';
 import { formatIQD, STORE_INFO, getStoredProducts, saveStoredProducts, CATEGORIES, getStoredCategories, saveStoredCategories, PRODUCTS } from '../data/products';
@@ -51,7 +52,6 @@ import {
   subscribeToOrdersRealtime 
 } from '../services/ordersFirestoreService';
 import { 
-  saveProductToFirestore, 
   deleteProductFromFirestore,
   subscribeToProductsRealtime,
   updateProductPricingInFirestore,
@@ -68,6 +68,9 @@ import {
 } from '../services/categoriesFirestoreService';
 import {
   subscribeToChatRealtime,
+  subscribeToAllChatThreadsRealtime,
+  deleteChatThreadFromFirestore,
+  sendChatMessageToFirestore,
   markChatAsReadByAdmin
 } from '../services/chatsFirestoreService';
 import { compressAndProcessImage } from '../utils/imageUpload';
@@ -467,6 +470,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // Private Customer Chats State
   const [chatThreads, setChatThreads] = useState<any[]>([]);
+  const cloudChatThreadsRef = useRef<any[]>([]);
   const [selectedChatOrderId, setSelectedChatOrderId] = useState<string | null>(null);
   const [selectedChatMessages, setSelectedChatMessages] = useState<any[]>([]);
   const [adminChatInput, setAdminChatInput] = useState<string>('');
@@ -961,7 +965,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const threadMap = new Map<string, any>();
     apiThreads.forEach((t) => threadMap.set(t.orderId.toUpperCase(), t));
 
-    // Merge local support chats from multiple potential keys
+    // Merge cloud chat threads from Firestore (Primary Cloud Truth)
+    const cloudThreads = cloudChatThreadsRef.current || [];
+    cloudThreads.forEach((t) => {
+      const code = t.orderId.toUpperCase();
+      const existing = threadMap.get(code);
+      threadMap.set(code, {
+        orderId: code,
+        customerName: t.customerName || existing?.customerName || 'زبون الدعم',
+        customerPhone: t.customerPhone || existing?.customerPhone || '',
+        governorate: t.governorate || existing?.governorate || 'العراق',
+        orderStatus: t.orderStatus || existing?.orderStatus || 'received',
+        orderTotal: t.orderTotal || existing?.orderTotal || 0,
+        lastMessage: t.lastMessageText || t.lastMessage || existing?.lastMessage || 'رسالة دعم',
+        lastMessageTime: t.lastMessageAt || t.lastMessageTime || existing?.lastMessageTime || new Date().toISOString(),
+        unreadCount: t.unreadByAdmin ? 1 : 0,
+        messageCount: t.messageCount || existing?.messageCount || 1,
+      });
+    });
+
+    // Merge local support chats from multiple potential keys (Local fallback)
     const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
     CHAT_KEYS.forEach((key) => {
       try {
@@ -991,24 +1014,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     // Merge local orders
     try {
-      const localOrders = getLocalOrders();
-      localOrders.forEach((o) => {
-        const code = o.trackingCode.toUpperCase();
-        if (!threadMap.has(code)) {
-          threadMap.set(code, {
-            orderId: code,
-            customerName: o.customer.name,
-            customerPhone: o.customer.phone,
-            governorate: o.customer.governorate,
-            orderStatus: o.status,
-            orderTotal: o.total,
-            lastMessage: 'طلب جديد تم إنشاؤه',
-            lastMessageTime: o.createdAt,
-            unreadCount: 0,
-            messageCount: 0,
-          });
-        }
-      });
+      const localOrders = JSON.parse(localStorage.getItem('app_orders') || '[]');
+      if (Array.isArray(localOrders)) {
+        localOrders.forEach((o: any) => {
+          const code = o.trackingCode.toUpperCase();
+          if (!threadMap.has(code)) {
+            threadMap.set(code, {
+              orderId: code,
+              customerName: o.customer.name,
+              customerPhone: o.customer.phone,
+              governorate: o.customer.governorate,
+              orderStatus: o.status,
+              orderTotal: o.total,
+              lastMessage: 'طلب جديد تم إنشاؤه',
+              lastMessageTime: o.createdAt,
+              unreadCount: 0,
+              messageCount: 0,
+            });
+          }
+        });
+      }
     } catch {}
 
     const mergedThreads = Array.from(threadMap.values());
@@ -1088,6 +1113,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     setSelectedChatMessages((prev) => [...prev, localMsg]);
 
+    // Save to Firestore Cloud Real-time Database
+    try {
+      await sendChatMessageToFirestore(localMsg);
+    } catch (err) {
+      console.warn('Firestore admin chat send notice:', err);
+    }
+
     try {
       const res = await fetch(`/api/chats/${selectedChatOrderId}/messages`, {
         method: 'POST',
@@ -1116,6 +1148,67 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
+  const handleDeleteChatThread = async (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm(`هل أنت متأكد من حذف محادثة الطلب #${orderId} بالكامل؟`)) return;
+
+    try {
+      await deleteChatThreadFromFirestore(orderId);
+    } catch (err) {
+      console.warn('Firestore delete chat error:', err);
+    }
+
+    try {
+      await fetch(`/api/chats/${orderId}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Server delete chat error:', err);
+    }
+
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        const updated = localItems.filter((m: any) => (m.orderId || m.trackingCode || '').toUpperCase() !== orderId.toUpperCase());
+        localStorage.setItem(key, JSON.stringify(updated));
+      } catch {}
+    });
+
+    if (selectedChatOrderId && selectedChatOrderId.toUpperCase() === orderId.toUpperCase()) {
+      setSelectedChatOrderId(null);
+      setSelectedChatMessages([]);
+    }
+    fetchChatThreads();
+    setSaveSuccessMsg(`تم حذف محادثة #${orderId} بنجاح ✅`);
+    setTimeout(() => setSaveSuccessMsg(null), 3000);
+  };
+
+  const handleResolveChatThread = async (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      await fetch(`/api/chats/${orderId}/resolve`, { method: 'POST' });
+    } catch (err) {
+      console.warn('Server resolve chat error:', err);
+    }
+
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const localItems = JSON.parse(localStorage.getItem(key) || '[]');
+        const updated = localItems.map((m: any) => {
+          if ((m.orderId || m.trackingCode || '').toUpperCase() === orderId.toUpperCase()) {
+            return { ...m, readByAdmin: true };
+          }
+          return m;
+        });
+        localStorage.setItem(key, JSON.stringify(updated));
+      } catch {}
+    });
+
+    fetchChatThreads();
+    setSaveSuccessMsg(`تم تعليم محادثة #${orderId} كمجابة بنجاح ✅`);
+    setTimeout(() => setSaveSuccessMsg(null), 3000);
+  };
+
   const handleOpenChatFromToast = (orderId: string) => {
     setAdminMainTab('chats');
     setSelectedChatOrderId(orderId);
@@ -1136,9 +1229,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   const totalUnreadChatsCount = chatThreads.reduce((acc, t) => acc + (t.unreadCount || 0), 0);
 
-  const handleMarkAllMessagesAsRead = () => {
+  const handleMarkAllMessagesAsRead = async () => {
     if (!window.confirm('هل تريد مسح كافة إشعارات المحادثات وتصفير العداد؟')) return;
     
+    // Mark cloud threads
+    for (const thread of chatThreads) {
+      try {
+        await markChatAsReadByAdmin(thread.orderId);
+      } catch {}
+    }
+
     const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
     CHAT_KEYS.forEach((key) => {
       try {
@@ -1152,7 +1252,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setTimeout(() => setSaveSuccessMsg(null), 3000);
   };
 
-  const markThreadAsRead = (orderId: string) => {
+  const markThreadAsRead = async (orderId: string) => {
+    try {
+      await markChatAsReadByAdmin(orderId);
+    } catch {}
+
     const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
     CHAT_KEYS.forEach((key) => {
       try {
@@ -1170,105 +1274,54 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     fetchChatThreads();
   };
 
-  // Poll chats & SSE event listener for instant chat alerts
+  // Real-time Firestore Chat Threads Subscription & Active Chat Stream
   useEffect(() => {
     if (!isAuthenticated) return;
 
     fetchChatThreads();
 
+    // 1. Subscribe to all chat threads in Firestore
+    const unsubscribeAllChats = subscribeToAllChatThreadsRealtime((cloudThreads) => {
+      if (Array.isArray(cloudThreads)) {
+        cloudChatThreadsRef.current = cloudThreads;
+        fetchChatThreads();
+      }
+    });
+
+    // 2. Poll fallback
     const chatInterval = setInterval(() => {
       fetchChatThreads();
-      if (selectedChatOrderId) {
-        fetchSelectedChatMessages(selectedChatOrderId);
-      }
-    }, 15000);
-
-    // EventSource for real-time SSE chat messages
-    let eventSource: EventSource | null = null;
-    try {
-      eventSource = new EventSource('/api/orders/events');
-      eventSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          if (parsed.type === 'NEW_CHAT_MESSAGE') {
-            fetchChatThreads();
-            const orderId = parsed.data?.orderId || parsed.data?.trackingCode || parsed.data?.message?.orderId;
-            const customerName = parsed.data?.customerName || parsed.data?.message?.senderName || 'زبون المتجر';
-            const msg = parsed.data?.message;
-
-            if (selectedChatOrderId && orderId && selectedChatOrderId.toUpperCase() === selectedChatOrderId.toUpperCase()) {
-              fetchSelectedChatMessages(orderId);
-            }
-
-            if (msg && msg.sender === 'customer') {
-              if (!knownChatMessageIdsRef.current.has(msg.id)) {
-                knownChatMessageIdsRef.current.add(msg.id);
-
-                if (soundEnabled) {
-                  playRoyalOrderChime(soundVolume, 1);
-                }
-                triggerDeviceVibration([200, 100, 200]);
-
-                setChatToastAlert({
-                  id: msg.id,
-                  orderId: orderId,
-                  customerName: customerName,
-                  text: msg.text,
-                  createdAt: msg.createdAt || new Date().toISOString(),
-                });
-
-                showChatPushNotification(
-                  {
-                    orderId: orderId,
-                    customerName: customerName,
-                    text: msg.text,
-                  },
-                  () => {
-                    handleOpenChatFromToast(orderId);
-                  }
-                );
-              }
-            }
-          }
-        } catch (e) {
-          console.error('SSE parse error in admin chat:', e);
-        }
-      };
-    } catch (e) {
-      console.error('SSE connection failed:', e);
-    }
+    }, 10000);
 
     return () => {
+      unsubscribeAllChats();
       clearInterval(chatInterval);
-      if (eventSource) {
-        eventSource.close();
-      }
     };
-  }, [isAuthenticated, selectedChatOrderId, soundEnabled, soundVolume]);
+  }, [isAuthenticated]);
+
+  // Real-time subscription for the selected active chat thread
+  useEffect(() => {
+    if (!isAuthenticated || !selectedChatOrderId) return;
+
+    fetchSelectedChatMessages(selectedChatOrderId);
+
+    const unsubscribeActiveChat = subscribeToChatRealtime(selectedChatOrderId, (incomingMessages) => {
+      if (Array.isArray(incomingMessages) && incomingMessages.length > 0) {
+        setSelectedChatMessages(incomingMessages);
+      }
+    });
+
+    return () => {
+      unsubscribeActiveChat();
+    };
+  }, [isAuthenticated, selectedChatOrderId]);
 
   const fetchOrders = async (silent: boolean = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const incomingOrders = await fetchAllOrdersCombined();
-      if (Array.isArray(incomingOrders)) {
-        if (!isInitialFetchDoneRef.current) {
-          // First load: seed the known orders so we don't alert for old existing orders
-          knownOrderIdsRef.current = new Set(incomingOrders.map((o) => o.id));
-          isInitialFetchDoneRef.current = true;
-        } else {
-          // Subsequent checks: identify newly arrived orders
-          const brandNewOrders = incomingOrders.filter((o) => !knownOrderIdsRef.current.has(o.id));
-          
-          if (brandNewOrders.length > 0) {
-            brandNewOrders.forEach((newOrder) => {
-              knownOrderIdsRef.current.add(newOrder.id);
-              triggerNewOrderAlert(newOrder);
-            });
-          }
-        }
-
-        setOrders(incomingOrders);
-      }
+      // In real-time mode, data is synced via useEffect subscription.
+      // This manual trigger can be used for force-refresh if needed,
+      // but for now we just handle loading state.
     } catch (e) {
       console.warn('Error fetching admin orders:', e);
     } finally {
@@ -1482,9 +1535,21 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
   useEffect(() => {
     if (!isAuthenticated) return;
     const unsubscribe = subscribeToCategoriesRealtime((cloudCats) => {
-      if (cloudCats && cloudCats.length > 0) {
-        setAdminCategories(cloudCats);
-        saveStoredCategories(cloudCats);
+      if (Array.isArray(cloudCats)) {
+        // Merge with static categories to prevent loss of defaults
+        const categoryMap = new Map<string, any>();
+        
+        // Start with default static categories
+        CATEGORIES.forEach(cat => categoryMap.set(cat.id, cat));
+        
+        // Overlay cloud categories
+        cloudCats.forEach(cat => {
+          categoryMap.set(cat.id, cat);
+        });
+        
+        const merged = Array.from(categoryMap.values());
+        setAdminCategories(merged);
+        saveStoredCategories(merged);
       }
     });
     return () => unsubscribe();
@@ -1930,10 +1995,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             </div>
 
             {/* Main Admin Switcher Tabs: Orders vs Telegram vs Products vs Alert Settings */}
-            <div className="flex flex-wrap items-center gap-2 bg-[#18181B] p-1.5 rounded-xl border border-[#2E2E33]">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap items-center gap-2 bg-[#18181B] p-1.5 rounded-xl border border-[#2E2E33]">
               <button
                 onClick={() => setAdminMainTab('orders')}
-                className={`flex-1 py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   adminMainTab === 'orders'
                     ? 'bg-[#D4AF37] text-black shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -1948,7 +2013,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   setAdminMainTab('chats');
                   fetchChatThreads();
                 }}
-                className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
                   adminMainTab === 'chats'
                     ? 'bg-emerald-500 text-black font-extrabold shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -1968,7 +2033,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   setAdminMainTab('telegram');
                   fetchTelegramStatus();
                 }}
-                className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   adminMainTab === 'telegram'
                     ? 'bg-[#229ED9] text-white shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -1985,7 +2050,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
               <button
                 onClick={() => setAdminMainTab('products')}
-                className={`flex-1 py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   adminMainTab === 'products'
                     ? 'bg-[#D4AF37] text-black shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -1997,7 +2062,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
               <button
                 onClick={() => setAdminMainTab('categories')}
-                className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   adminMainTab === 'categories'
                     ? 'bg-[#D4AF37] text-black shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -2009,7 +2074,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
               <button
                 onClick={() => setAdminMainTab('alerts_settings')}
-                className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
                   adminMainTab === 'alerts_settings'
                     ? 'bg-[#D4AF37] text-black shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -2076,7 +2141,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 {/* Chats Split Layout */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                   {/* Threads List Sidebar (Cols 5) */}
-                  <div className="lg:col-span-5 space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                  <div className={`lg:col-span-5 space-y-2 max-h-[500px] overflow-y-auto pr-1 ${selectedChatOrderId ? 'hidden lg:block' : 'block'}`}>
                     {chatThreads.length === 0 ? (
                       <div className="p-8 text-center text-[#A1A1AA] space-y-2 bg-[#121214] rounded-xl border border-[#27272A]">
                         <MessageSquare className="w-8 h-8 mx-auto text-[#52525B]" />
@@ -2143,7 +2208,25 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                     minute: '2-digit',
                                   })}
                                 </span>
-                                <span>{thread.messageCount} رسالة</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[9px] bg-[#27272A] px-1.5 py-0.5 rounded-md text-[#71717A] font-mono">{thread.messageCount} رسالة</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleResolveChatThread(thread.orderId, e)}
+                                    title="تعليم كمجاب / مقروء"
+                                    className="text-emerald-400/80 hover:text-emerald-400 hover:bg-emerald-950/40 p-1 rounded-lg transition-colors"
+                                  >
+                                    <CheckCheck className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteChatThread(thread.orderId, e)}
+                                    title="حذف المحادثة نهائياً"
+                                    className="text-rose-400/80 hover:text-rose-400 hover:bg-rose-950/40 p-1 rounded-lg transition-colors"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -2152,7 +2235,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   </div>
 
                   {/* Selected Chat Box (Cols 7) */}
-                  <div className="lg:col-span-7 bg-[#121214] rounded-xl border border-[#27272A] p-4 flex flex-col justify-between min-h-[420px] space-y-4">
+                  <div className={`lg:col-span-7 bg-[#121214] rounded-xl border border-[#27272A] p-4 flex flex-col justify-between min-h-[420px] space-y-4 ${!selectedChatOrderId ? 'hidden lg:flex' : 'flex'}`}>
                     {!selectedChatOrderId ? (
                       <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-3 my-auto">
                         <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
@@ -2169,34 +2252,66 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         {(() => {
                           const activeThread = chatThreads.find((t) => t.orderId === selectedChatOrderId);
                           return (
-                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#27272A] pb-3">
-                              <div>
-                                <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                                  <span>الزبون: {activeThread?.customerName || 'زبون المتجر'}</span>
-                                  <span className="font-mono text-xs text-[#FFE58F]">
-                                    (#{selectedChatOrderId})
-                                  </span>
-                                </h4>
-                                {activeThread?.customerPhone && (
-                                  <p className="text-xs text-[#A1A1AA]" dir="ltr">
-                                    📞 {activeThread.customerPhone} | 📍 {activeThread.governorate || 'البصرة'}
-                                  </p>
-                                )}
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#27272A] pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedChatOrderId(null)}
+                                  className="lg:hidden p-2 rounded-xl bg-[#27272A] hover:bg-[#3F3F46] text-white cursor-pointer transition-colors"
+                                  title="رجوع للقائمة"
+                                >
+                                  <ArrowRight className="w-4 h-4 text-amber-300" />
+                                </button>
+                                <div>
+                                  <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                                    <span>الزبون: {activeThread?.customerName || 'زبون المتجر'}</span>
+                                    <span className="font-mono text-xs text-[#FFE58F]">
+                                      (#{selectedChatOrderId})
+                                    </span>
+                                  </h4>
+                                  {activeThread?.customerPhone && (
+                                    <p className="text-xs text-[#A1A1AA]" dir="ltr">
+                                      📞 {activeThread.customerPhone} | 📍 {activeThread.governorate || 'البصرة'}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
 
-                              {activeThread?.customerPhone && (
-                                <a
-                                  href={`https://wa.me/${activeThread.customerPhone.replace(/\+/g, '')}?text=${encodeURIComponent(
-                                    `مرحباً ${activeThread.customerName || ''}، معكم إدارة كوزمتك الملكة بخصوص طلبكم #${selectedChatOrderId}`
-                                  )}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="bg-[#25D366] hover:bg-[#1EBE5D] text-black font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {activeThread?.customerPhone && (
+                                  <a
+                                    href={`https://wa.me/${activeThread.customerPhone.replace(/\+/g, '')}?text=${encodeURIComponent(
+                                      `مرحباً ${activeThread.customerName || ''}، معكم إدارة كوزمتك الملكة بخصوص طلبكم #${selectedChatOrderId}`
+                                    )}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-[#25D366] hover:bg-[#1EBE5D] text-black font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                    <span>واتساب</span>
+                                  </a>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleResolveChatThread(selectedChatOrderId, e)}
+                                  className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
+                                  title="تعليم المحادثة كمجابة"
                                 >
-                                  <MessageCircle className="w-3.5 h-3.5" />
-                                  <span>واتساب الزبون</span>
-                                </a>
-                              )}
+                                  <CheckCheck className="w-3.5 h-3.5" />
+                                  <span>تم الرد</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteChatThread(selectedChatOrderId, e)}
+                                  className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
+                                  title="حذف المحادثة بالكامل"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>حذف</span>
+                                </button>
+                              </div>
                             </div>
                           );
                         })()}

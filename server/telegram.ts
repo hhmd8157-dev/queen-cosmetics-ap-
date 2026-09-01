@@ -603,3 +603,205 @@ export async function sendStockAlertTelegramNotification(requestItem: {
     errors,
   };
 }
+
+let lastTelegramUpdateId = 0;
+
+export async function startTelegramPolling(
+  onNewAdminMessage: (orderId: string, text: string, senderName?: string) => void
+) {
+  const config = getTelegramConfig();
+  const token = config.botToken?.trim();
+  if (!token || !config.enabled) {
+    // If not enabled or no token, retry in 10 seconds to check if config changed
+    setTimeout(() => startTelegramPolling(onNewAdminMessage), 10000);
+    return;
+  }
+
+  // Initialize offset if not already done
+  if (lastTelegramUpdateId === 0) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=-1&limit=1`);
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.result) && data.result.length > 0) {
+        lastTelegramUpdateId = data.result[0].update_id;
+        console.log(`[Telegram Polling] Initialized watermark to update_id: ${lastTelegramUpdateId}`);
+      }
+    } catch (err) {
+      console.warn(`[Telegram Polling] Init watermark failed, starting from offset 0:`, err);
+    }
+  }
+
+  const poll = async () => {
+    while (true) {
+      try {
+        const activeConfig = getTelegramConfig();
+        const activeToken = activeConfig.botToken?.trim();
+        if (!activeToken || !activeConfig.enabled) {
+          // If disabled, wait 10 seconds before checking again
+          await new Promise((resolve) => setTimeout(resolve, 10000));
+          continue;
+        }
+
+        const offset = lastTelegramUpdateId ? lastTelegramUpdateId + 1 : 0;
+        // Fetch updates
+        const res = await fetch(`https://api.telegram.org/bot${activeToken}/getUpdates?offset=${offset}&timeout=10`);
+        const data = await res.json();
+
+        if (data.ok && Array.isArray(data.result)) {
+          for (const update of data.result) {
+            lastTelegramUpdateId = update.update_id;
+
+            if (update.message) {
+              const msg = update.message;
+              const text = msg.text?.trim() || "";
+              const chatId = String(msg.chat.id);
+
+              // Auto-register Chat ID so the manager doesn't have to input it manually!
+              if (!activeConfig.chatIds.includes(chatId)) {
+                activeConfig.chatIds.push(chatId);
+                saveTelegramConfig(activeConfig);
+                console.log(`[Telegram Auto-Sync] Registered new subscriber chat ID: ${chatId}`);
+              }
+
+              // Determine if this is a reply to a tracking message
+              let orderId: string | null = null;
+              let replyText: string = text;
+
+              if (msg.reply_to_message) {
+                const parentText = msg.reply_to_message.text || "";
+                // Extract tracking code ORD-XXXX or SUPP-XXXX
+                const ordMatch = parentText.match(/ORD-\d{4}/i);
+                const suppMatch = parentText.match(/SUPP-\d{4}/i);
+                
+                if (ordMatch) {
+                  orderId = ordMatch[0].toUpperCase();
+                } else if (suppMatch) {
+                  orderId = suppMatch[0].toUpperCase();
+                }
+              } else {
+                // Inline command like "ORD-7392 text" or "#ORD-7392 text"
+                const inlineMatch = text.match(/^(?:#)?(ORD-\d{4}|SUPP-\d{4})\s+(.+)$/i);
+                if (inlineMatch) {
+                  orderId = inlineMatch[1].toUpperCase();
+                  replyText = inlineMatch[2].trim();
+                }
+              }
+
+              if (orderId && replyText) {
+                // Trigger the callback in server.ts
+                const senderName = msg.from?.first_name 
+                  ? `${msg.from.first_name} (تليجرام)`
+                  : 'إدارة كوزمتك الملكة 👑';
+                
+                onNewAdminMessage(orderId, replyText, senderName);
+
+                // Confirm receipt to manager on Telegram
+                try {
+                  await fetch(`https://api.telegram.org/bot${activeToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      chat_id: chatId,
+                      text: `✅ تم تسليم ردّك للزبون بنجاح!\n💬 <b>الرسالة:</b> ${replyText}`,
+                      parse_mode: 'HTML',
+                      reply_to_message_id: msg.message_id,
+                    }),
+                  });
+                } catch (sendErr) {
+                  console.error('[Telegram Polling] Fail sending feedback to Telegram:', sendErr);
+                }
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('[Telegram Polling] Polling request error:', err?.message || err);
+        // Wait 5 seconds before retrying if there's a network/parse failure
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      // Brief pause to prevent spinning CPU
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  };
+
+  // Start the infinite poll loop
+  poll();
+}
+
+export function formatAdminReplyTelegramMessage(data: {
+  orderId: string;
+  text: string;
+}): string {
+  return `👑 <b>تم إرسال رد من الإدارة عبر لوحة التحكم!</b>
+━━━━━━━━━━━━━━━━━━━━
+🆔 <b>رمز التتبع:</b> <code>#${data.orderId}</code>
+💬 <b>الرد:</b> ${escapeHtml(data.text)}
+━━━━━━━━━━━━━━━━━━━━`;
+}
+
+export async function sendAdminReplyTelegramNotification(data: {
+  orderId: string;
+  text: string;
+}): Promise<{
+  success: boolean;
+  sentCount: number;
+  failedCount: number;
+  errors: string[];
+}> {
+  const config = getTelegramConfig();
+  if (!config.enabled) {
+    return { success: false, sentCount: 0, failedCount: 0, errors: ['Telegram notifications disabled'] };
+  }
+
+  const token = config.botToken.trim();
+  if (!token) {
+    return { success: false, sentCount: 0, failedCount: 0, errors: ['No Bot Token'] };
+  }
+
+  const recipients = [...config.chatIds];
+  if (recipients.length === 0) {
+    return {
+      success: false,
+      sentCount: 0,
+      failedCount: 0,
+      errors: ['No subscribed chat IDs found.'],
+    };
+  }
+
+  const messageText = formatAdminReplyTelegramMessage(data);
+  let sentCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+
+  for (const chatId of recipients) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: messageText,
+          parse_mode: 'HTML',
+        }),
+      });
+
+      const resData = await res.json();
+      if (resData.ok) {
+        sentCount++;
+      } else {
+        failedCount++;
+        errors.push(`Chat ${chatId}: ${resData.description || 'Failed'}`);
+      }
+    } catch (err: any) {
+      failedCount++;
+      errors.push(`Chat ${chatId}: ${err?.message || 'Network error'}`);
+    }
+  }
+
+  return {
+    success: sentCount > 0,
+    sentCount,
+    failedCount,
+    errors,
+  };
+}

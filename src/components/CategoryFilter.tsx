@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { 
   LayoutGrid,
   List,
@@ -108,7 +109,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
             const count = categoryCounts[cat.id] || 0;
 
             return (
-              <button
+              <motion.button
                 key={cat.id}
                 id={`cat-btn-${cat.id}`}
                 onClick={() => {
@@ -117,6 +118,8 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
                     onSelectSubCategory('all');
                   }
                 }}
+                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.02 }}
                 className={`snap-start flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all duration-200 cursor-pointer shrink-0 shadow-xs border ${
                   isSelected
                     ? 'bg-[#18181B] dark:bg-[#C5A059] text-[#FFE58F] dark:text-black border-[#D4AF37] dark:border-[#FFE58F] shadow-md scale-102 ring-2 ring-[#D4AF37]/30'
@@ -136,7 +139,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
                 >
                   {count}
                 </span>
-              </button>
+              </motion.button>
             );
           })}
         </div>
