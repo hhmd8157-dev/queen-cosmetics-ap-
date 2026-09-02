@@ -116,17 +116,40 @@ export function subscribeToProductsRealtime(
 }
 
 /**
+ * Helper to recursively sanitize object for Firestore (removes undefined values and replaces them with null)
+ */
+function sanitizeForFirestore(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore);
+  }
+  if (typeof obj === 'object') {
+    const sanitized: any = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        const val = obj[key];
+        if (val !== undefined) {
+          sanitized[key] = sanitizeForFirestore(val);
+        }
+      }
+    }
+    return sanitized;
+  }
+  return obj;
+}
+
+/**
  * Add a brand new product to Firestore permanently
  */
 export async function addNewProductToFirestore(product: Product): Promise<void> {
   const docRef = doc(db, PRODUCTS_COLLECTION, product.id);
-  const cleanPayload = {
+  const cleanPayload = sanitizeForFirestore({
     ...product,
     isDeleted: false,
     originalPrice: product.originalPrice ?? null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  };
+  });
 
   try {
     await setDoc(docRef, cleanPayload, { merge: true });
@@ -144,11 +167,11 @@ export async function updateProductInFirestore(
   updates: Partial<Product>
 ): Promise<void> {
   const docRef = doc(db, PRODUCTS_COLLECTION, productId);
-  const cleanUpdates: Record<string, any> = {
+  const cleanUpdates = sanitizeForFirestore({
     ...updates,
     isDeleted: false,
     updatedAt: new Date().toISOString()
-  };
+  });
   
   if (updates.originalPrice === undefined) {
     cleanUpdates.originalPrice = null;
@@ -186,13 +209,14 @@ export async function forceSyncAllToFirestore(products: Product[]): Promise<void
     const batch = writeBatch(db);
     chunk.forEach((p) => {
       const docRef = doc(db, PRODUCTS_COLLECTION, p.id);
-      batch.set(docRef, {
+      const cleanData = sanitizeForFirestore({
         ...p,
         inStock: p.inStock ?? true,
         originalPrice: p.originalPrice || null,
         isDeleted: false,
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      });
+      batch.set(docRef, cleanData, { merge: true });
     });
     try {
       await batch.commit();
@@ -211,12 +235,13 @@ export async function toggleProductStockInFirestore(
 ): Promise<void> {
   const docRef = doc(db, PRODUCTS_COLLECTION, productId);
   try {
-    await setDoc(docRef, {
+    const cleanUpdates = sanitizeForFirestore({
       inStock,
       stockCount: inStock ? null : 0,
       isDeleted: false,
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    });
+    await setDoc(docRef, cleanUpdates, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${PRODUCTS_COLLECTION}/${productId}`);
   }

@@ -292,17 +292,25 @@ ${text}
     }
   };
 
-  // Poll chat messages periodically if chat is active or order is present
+  // Real-time Firestore Chat Subscription
   useEffect(() => {
     if (!isOpen || !order?.trackingCode) return;
 
+    // Fetch initial messages from API/local cache once
     fetchChatMessages(order.trackingCode, activeTab === 'chat');
 
-    const interval = setInterval(() => {
-      fetchChatMessages(order.trackingCode, activeTab === 'chat');
-    }, 3000);
+    // Subscribe to Firestore for live real-time synchronization
+    const unsubscribeChat = subscribeToChatRealtime(order.trackingCode, (incoming) => {
+      if (Array.isArray(incoming) && incoming.length > 0) {
+        setChatMessages(incoming);
+        const unread = incoming.filter((m: any) => m.sender === 'admin' && !m.readByCustomer).length;
+        setUnreadChatCount(unread);
+      }
+    });
 
-    return () => clearInterval(interval);
+    return () => {
+      unsubscribeChat();
+    };
   }, [isOpen, order?.trackingCode, activeTab]);
 
   useEffect(() => {

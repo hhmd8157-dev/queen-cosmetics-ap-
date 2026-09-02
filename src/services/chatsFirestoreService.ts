@@ -130,3 +130,31 @@ export async function markChatAsReadByAdmin(orderId: string): Promise<void> {
   const threadRef = doc(db, CHATS_COLLECTION, threadId);
   await setDoc(threadRef, { unreadByAdmin: false }, { merge: true });
 }
+
+/**
+ * Sync all local chats from Express API into Firestore
+ */
+export async function syncAllLocalChatsToFirestore(): Promise<void> {
+  try {
+    const res = await fetch('/api/chats');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data || !data.threads) return;
+
+    for (const thread of data.threads) {
+      const orderId = thread.orderId.toUpperCase();
+      const msgRes = await fetch(`/api/chats/${orderId}/messages`);
+      if (msgRes.ok) {
+        const msgData = await msgRes.json();
+        if (msgData && msgData.messages) {
+          for (const msg of msgData.messages) {
+            await sendChatMessageToFirestore(msg);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error syncing local chats to firestore:', error);
+  }
+}
+

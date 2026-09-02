@@ -4,7 +4,7 @@
  * so they can be saved safely into Firestore and to the server uploads directory.
  */
 
-export async function compressAndProcessImage(file: File, maxWidth = 900, maxHeight = 900, quality = 0.82): Promise<string> {
+export async function compressAndProcessImage(file: File, maxWidth = 720, maxHeight = 720, quality = 0.80): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
@@ -48,29 +48,9 @@ export async function compressAndProcessImage(file: File, maxWidth = 900, maxHei
             compressedBase64 = canvas.toDataURL('image/jpeg', quality);
           }
 
-          // Try uploading to backend server if available
-          try {
-            const res = await fetch('/api/upload-image', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                image: compressedBase64,
-                name: file.name
-              })
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              if (data.url) {
-                resolve(data.url);
-                return;
-              }
-            }
-          } catch {
-            // Backend endpoint not accessible; fall through to return compressed Base64
-          }
-
-          // Fallback to high-quality compressed Base64 (typically 30-70KB, completely safe in Firestore)
+          // Return the high-quality compressed Base64 Cloud string directly.
+          // This avoids container filesystem wipes on Cloud Run and ensures
+          // the image is permanently and reliably stored in Firestore.
           resolve(compressedBase64);
         } catch (err) {
           console.warn('Image canvas compression fallback:', err);

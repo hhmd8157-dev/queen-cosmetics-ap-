@@ -71,7 +71,8 @@ import {
   subscribeToAllChatThreadsRealtime,
   deleteChatThreadFromFirestore,
   sendChatMessageToFirestore,
-  markChatAsReadByAdmin
+  markChatAsReadByAdmin,
+  syncAllLocalChatsToFirestore
 } from '../services/chatsFirestoreService';
 import { compressAndProcessImage } from '../utils/imageUpload';
 import {
@@ -454,14 +455,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       setAdminProducts(getStoredProducts());
       const unsubscribe = subscribeToProductsRealtime((latestProducts) => {
         if (latestProducts && latestProducts.length > 0) {
-          // Merge with local products to preserve local-only additions
-          const localProducts = getStoredProducts();
-          const productMap = new Map<string, Product>();
-          
-          localProducts.forEach(p => productMap.set(p.id, p));
-          latestProducts.forEach(p => productMap.set(p.id, p));
-          
-          setAdminProducts(Array.from(productMap.values()));
+          saveStoredProducts(latestProducts);
+          setAdminProducts(latestProducts);
+        } else {
+          setAdminProducts(getStoredProducts());
         }
       });
       return () => unsubscribe();
@@ -1279,6 +1276,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     if (!isAuthenticated) return;
 
     fetchChatThreads();
+    // Silent background auto-sync
+    syncAllLocalChatsToFirestore().catch(() => {});
 
     // 1. Subscribe to all chat threads in Firestore
     const unsubscribeAllChats = subscribeToAllChatThreadsRealtime((cloudThreads) => {
@@ -1589,6 +1588,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 <h2 className="font-black text-base sm:text-lg bg-gradient-to-r from-[#FFE58F] via-white to-[#D4AF37] bg-clip-text text-transparent">
                   أهلاً بك أستاذ علاء | العقل المدبر للمتجر 👑
                 </h2>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-[11px] bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 shadow-xs mr-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>النظام متصل ومحدث تلقائياً 🟢</span>
+                </div>
               </div>
               <div className="flex items-center gap-3 mt-0.5 text-xs text-[#A1A1AA]">
                 <span className="font-mono text-amber-300 font-bold bg-black/40 px-2 py-0.5 rounded border border-[#D4AF37]/30">
@@ -2904,24 +2907,6 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     >
                       <Plus className="w-4 h-4" />
                       <span>إضافة منتج جديد</span>
-                    </button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await forceSyncAllToFirestore(adminProducts);
-                          setSaveSuccessMsg(`تمت مزامنة جميع المنتجات الـ ${adminProducts.length} مع قاعدة البيانات السحابية! ☁️✅`);
-                          setTimeout(() => setSaveSuccessMsg(null), 3000);
-                        } catch (err) {
-                          console.error(err);
-                          setSaveSuccessMsg('حدث خطأ أثناء المزامنة، يرجى المحاولة لاحقاً');
-                          setTimeout(() => setSaveSuccessMsg(null), 3000);
-                        }
-                      }}
-                      className="bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap border border-[#3F3F46]"
-                      title="مزامنة فورية شاملة مع قاعدة بيانات Firebase السحابية"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 text-[#D4AF37]" />
-                      <span>مزامنة سحابية</span>
                     </button>
 
                     <button

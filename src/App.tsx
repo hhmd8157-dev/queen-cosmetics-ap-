@@ -369,20 +369,14 @@ export default function App() {
     // 1. Subscribe to real-time Firestore cloud database updates
     const unsubscribeProds = subscribeToProductsRealtime((updatedProducts) => {
       if (Array.isArray(updatedProducts)) {
-        // Merge Firestore products with local storage products to ensure local additions/overrides are preserved
-        const localProducts = getStoredProducts();
-        const productMap = new Map<string, Product>();
-        
-        // Start with local products (which include static + custom)
-        localProducts.forEach(p => productMap.set(p.id, p));
-        
-        // Overlay Firestore products (latest cloud truth)
-        updatedProducts.forEach(p => {
-          productMap.set(p.id, p);
-        });
-        
-        const merged = Array.from(productMap.values());
-        setProductsList(merged.filter(p => p.image && p.image.trim() !== ''));
+        if (updatedProducts.length > 0) {
+          // Cloud database is populated and serves as the absolute source of truth
+          saveStoredProducts(updatedProducts);
+          setProductsList(updatedProducts.filter(p => p.image && p.image.trim() !== ''));
+        } else {
+          // Empty cloud fallback to local/static products
+          setProductsList(getStoredProducts().filter(p => p.image && p.image.trim() !== ''));
+        }
       }
     });
 
