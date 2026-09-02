@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { X, Send, CheckCircle2, MessageSquare, Phone, User, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Send, MessageSquare, Phone, User, ShieldCheck, RotateCcw, Sparkles } from 'lucide-react';
 import { sendTelegramDirectClientSide } from '../utils/telegramClient';
+import { sendChatMessageToFirestore, subscribeToChatRealtime } from '../services/chatsFirestoreService';
 
 interface SupportContactModalProps {
   isOpen: boolean;
@@ -17,11 +18,130 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
   const [phone, setPhone] = useState<string>('');
   const [message, setMessage] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
+  
+  // Active Thread & Messages State
+  const [activeSupportCode, setActiveSupportCode] = useState<string>('');
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [replyInput, setReplyInput] = useState<string>('');
+  const [isSendingReply, setIsSendingReply] = useState<boolean>(false);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Restore existing active support code on mount or modal open
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      const savedCode = localStorage.getItem('queen_last_support_code');
+      if (savedCode) {
+        setActiveSupportCode(savedCode);
+      }
+    } catch {}
+  }, [isOpen]);
+
+  // Real-time synchronization for active support code
+  useEffect(() => {
+    if (!isOpen || !activeSupportCode) return;
+
+    const upperCode = activeSupportCode.toUpperCase();
+
+    // 1. Initial load from localStorage
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    const foundMsgs: any[] = [];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((m: any) => {
+              if ((m.orderId || m.trackingCode || '').toUpperCase() === upperCode) {
+                if (!foundMsgs.some((x) => x.id === m.id)) {
+                  foundMsgs.push(m);
+                }
+              }
+            });
+          }
+        }
+      } catch {}
+    });
+    if (foundMsgs.length > 0) {
+      foundMsgs.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+      setChatMessages(foundMsgs);
+    }
+
+    // 2. Real-time Firestore subscription
+    const unsubscribe = subscribeToChatRealtime(upperCode, (incoming) => {
+      if (Array.isArray(incoming) && incoming.length > 0) {
+        setChatMessages(incoming);
+      }
+    });
+
+    // 3. Same-tab Custom Event listener
+    const handleIncomingChatMessage = (e: any) => {
+      const msg = e.detail?.message;
+      if (msg && (msg.orderId || msg.trackingCode || '').toUpperCase() === upperCode) {
+        setChatMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) {
+            return prev.map((m) => (m.id === msg.id ? msg : m));
+          }
+          return [...prev, msg];
+        });
+        if (msg.sender === 'admin') {
+          try {
+            const audio = new Audio('/notification.mp3');
+            audio.play().catch(() => {});
+          } catch {}
+        }
+      }
+    };
+    window.addEventListener('queen_new_chat_message', handleIncomingChatMessage as any);
+
+    // 4. Cross-tab BroadcastChannel listener
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('queen_orders_channel');
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'NEW_CHAT_MESSAGE' && event.data?.payload) {
+          const msg = event.data.payload;
+          if ((msg.orderId || msg.trackingCode || '').toUpperCase() === upperCode) {
+            setChatMessages((prev) => {
+              if (prev.some((m) => m.id === msg.id)) {
+                return prev.map((m) => (m.id === msg.id ? msg : m));
+              }
+              return [...prev, msg];
+            });
+            if (msg.sender === 'admin') {
+              try {
+                const audio = new Audio('/notification.mp3');
+                audio.play().catch(() => {});
+              } catch {}
+            }
+          }
+        }
+      };
+    } catch {}
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('queen_new_chat_message', handleIncomingChatMessage as any);
+      if (channel) {
+        channel.close();
+      }
+    };
+  }, [isOpen, activeSupportCode]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    if (chatMessages.length > 0) {
+      setTimeout(() => {
+        chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [chatMessages.length]);
 
   if (!isOpen) return null;
 
+  // Initial Form Submit (Creates ticket + initial message)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -50,6 +170,7 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
     const newChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       orderId: supportCode,
+      trackingCode: supportCode,
       sender: 'customer',
       senderName: cleanName,
       customerPhone: cleanPhone,
@@ -58,7 +179,14 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
       createdAt: new Date().toISOString(),
       readByAdmin: false,
       readByCustomer: true,
+      status: 'pending',
     };
+
+    setActiveSupportCode(supportCode);
+    setChatMessages([newChatMessage]);
+    try {
+      localStorage.setItem('queen_last_support_code', supportCode);
+    } catch {}
 
     // Save immediately to unified localStorage keys
     const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
@@ -72,7 +200,6 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
 
     // Cloud Sync
     try {
-      const { sendChatMessageToFirestore } = await import('../services/chatsFirestoreService');
       await sendChatMessageToFirestore(newChatMessage as any);
     } catch (err) {
       console.warn('Chat cloud sync error:', err);
@@ -87,7 +214,7 @@ export const SupportContactModal: React.FC<SupportContactModalProps> = ({
     } catch {}
 
     try {
-      // Send direct client-side telegram notification as a robust production backup for Vercel/Static deployments
+      // Send direct client-side telegram notification
       const tgText = `💬 <b>رسالة جديدة من زبون الدعم الفني</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔖 <b>رقم الدعم:</b> <code>#${supportCode}</code>
@@ -103,8 +230,8 @@ ${cleanMessage}
         console.warn('Direct telegram client send notice:', tgErr);
       });
 
-      // 1. Post to backend chat API which notifies Telegram and Admin Panel
-      const res = await fetch(`/api/chats/${supportCode}/messages`, {
+      // Post to backend chat API
+      fetch(`/api/chats/${supportCode}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -114,14 +241,12 @@ ${cleanMessage}
           governorate: 'العراق',
           text: cleanMessage,
         }),
-      });
+      }).catch(() => {});
 
-      setIsSuccess(true);
       if (onSuccessMessage) {
-        onSuccessMessage('تم إرسال رسالتك إلى إدارة المتجر بنجاح! سيتم الرد قريباً.');
+        onSuccessMessage('تم إرسال رسالتك إلى إدارة المتجر بنجاح!');
       }
     } catch (err) {
-      setIsSuccess(true);
       if (onSuccessMessage) {
         onSuccessMessage('تم إرسال رسالتك بنجاح!');
       }
@@ -130,11 +255,89 @@ ${cleanMessage}
     }
   };
 
-  const handleResetAndClose = () => {
-    setIsSuccess(false);
-    setName('');
-    setPhone('');
+  // Customer sending a follow-up reply in the active chat thread
+  const handleSendReply = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!replyInput.trim() || !activeSupportCode) return;
+
+    const text = replyInput.trim();
+    setReplyInput('');
+    setIsSendingReply(true);
+
+    const followUpMsg: any = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      orderId: activeSupportCode.toUpperCase(),
+      trackingCode: activeSupportCode.toUpperCase(),
+      sender: 'customer',
+      senderName: name || 'زبون الدعم',
+      customerPhone: phone || '',
+      governorate: 'العراق',
+      text,
+      createdAt: new Date().toISOString(),
+      readByAdmin: false,
+      readByCustomer: true,
+      status: 'pending',
+    };
+
+    setChatMessages((prev) => [...prev, followUpMsg]);
+
+    // Save to LocalStorage
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.push(followUpMsg);
+        localStorage.setItem(key, JSON.stringify(existing));
+      } catch {}
+    });
+
+    // Broadcast
+    try {
+      window.dispatchEvent(new CustomEvent('queen_new_chat_message', { detail: { message: followUpMsg } }));
+      const channel = new BroadcastChannel('queen_orders_channel');
+      channel.postMessage({ type: 'NEW_CHAT_MESSAGE', payload: followUpMsg, timestamp: Date.now() });
+      channel.close();
+    } catch {}
+
+    // Cloud Save
+    try {
+      await sendChatMessageToFirestore(followUpMsg);
+    } catch {}
+
+    // Send to Telegram & Backend
+    try {
+      const tgText = `💬 <b>متابعة جديدة من زبون الدعم الفني</b>
+━━━━━━━━━━━━━━━━━━━━
+🔖 <b>رقم الدعم:</b> <code>#${activeSupportCode}</code>
+👤 <b>الاسم:</b> <b>${name || 'زبون الدعم'}</b>
+📞 <b>الهاتف:</b> <code>${phone || '-'}</code>
+
+✉️ <b>الرسالة:</b>
+${text}
+━━━━━━━━━━━━━━━━━━━━`;
+      sendTelegramDirectClientSide(tgText).catch(() => {});
+
+      fetch(`/api/chats/${activeSupportCode}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(followUpMsg),
+      }).catch(() => {});
+    } catch {} finally {
+      setIsSendingReply(false);
+    }
+  };
+
+  const handleStartNewInquiry = () => {
+    setActiveSupportCode('');
+    setChatMessages([]);
     setMessage('');
+    setErrorMsg('');
+    try {
+      localStorage.removeItem('queen_last_support_code');
+    } catch {}
+  };
+
+  const handleResetAndClose = () => {
     setErrorMsg('');
     onClose();
   };
@@ -157,11 +360,16 @@ ${cleanMessage}
               <MessageSquare className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-sm sm:text-base text-gray-900 dark:text-white">
-                تواصل مع الإدارة والدعم الفني 💬
+              <h3 className="font-extrabold text-sm sm:text-base text-gray-900 dark:text-white flex items-center gap-1.5">
+                <span>تواصل مع الإدارة والدعم الفني 💬</span>
+                {activeSupportCode && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+                    #{activeSupportCode}
+                  </span>
+                )}
               </h3>
               <p className="text-[11px] text-gray-500 dark:text-[#A1A1AA]">
-                أرسل استفسارك أو رسالتك لتصل فوراً إلى لوحة التحكم وبوت التليجرام
+                محادثة حية ومباشرة تصل فوراً إلى لوحة تحكم الإدارة وتطبيق التليجرام
               </p>
             </div>
           </div>
@@ -174,27 +382,101 @@ ${cleanMessage}
         </div>
 
         {/* Body */}
-        <div className="p-4 sm:p-6 space-y-4">
-          {isSuccess ? (
-            <div className="py-8 text-center space-y-4">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-500 mx-auto animate-bounce">
-                <CheckCircle2 className="w-8 h-8" />
+        <div className="p-4 sm:p-5 space-y-4">
+          {activeSupportCode ? (
+            /* Active Live Chat Thread View */
+            <div className="space-y-3">
+              {/* Chat Status Banner */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs">
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <span>المحادثة نشطة مع الإدارة</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleStartNewInquiry}
+                  className="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-400 hover:text-emerald-500 transition-colors cursor-pointer font-semibold"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>فتح استفسار جديد</span>
+                </button>
               </div>
-              <h4 className="font-bold text-lg text-gray-900 dark:text-white">
-                تم إرسال رسالتك بنجاح! 🎉
-              </h4>
-              <p className="text-xs sm:text-sm text-gray-600 dark:text-[#A1A1AA] max-w-sm mx-auto leading-relaxed">
-                تم حفظ الرسالة في قسم المحادثات وإرسال إشعار فوري إلى إدارة كوزمتك الملكة. سنقوم بالرد على رقم هاتفك في أقرب وقت.
-              </p>
-              <button
-                type="button"
-                onClick={handleResetAndClose}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm px-6 py-2.5 rounded-xl transition-all cursor-pointer shadow-md"
-              >
-                إغلاق النافذة
-              </button>
+
+              {/* Chat Messages Box */}
+              <div className="h-[280px] sm:h-[320px] overflow-y-auto space-y-3 p-3 bg-gray-50 dark:bg-[#0D0D10] rounded-xl border border-gray-200 dark:border-[#27272A]">
+                {chatMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2">
+                    <Sparkles className="w-8 h-8 text-amber-500" />
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      جاري مزامنة المحادثة مع الإدارة...
+                    </p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg) => {
+                    const isAdmin = msg.sender === 'admin';
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${isAdmin ? 'items-start' : 'items-end'} space-y-1`}
+                      >
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 px-1">
+                          {isAdmin ? (
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                              <ShieldCheck className="w-3 h-3" />
+                              إدارة كوزمتك الملكة 👑
+                            </span>
+                          ) : (
+                            <span className="font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              أنت ({msg.senderName || name || 'الزبون'})
+                            </span>
+                          )}
+                          <span>•</span>
+                          <span>
+                            {new Date(msg.createdAt || Date.now()).toLocaleTimeString('ar-IQ', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+
+                        <div
+                          className={`max-w-[85%] sm:max-w-[78%] p-3 rounded-2xl text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                            isAdmin
+                              ? 'bg-emerald-950/80 dark:bg-emerald-900 text-emerald-100 border border-emerald-500/40 rounded-tr-none shadow-sm'
+                              : 'bg-gradient-to-r from-amber-500 to-amber-600 text-white font-semibold rounded-tl-none shadow-sm'
+                          }`}
+                        >
+                          {msg.text}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={chatScrollRef} />
+              </div>
+
+              {/* Follow-up Reply Input */}
+              <form onSubmit={handleSendReply} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={replyInput}
+                  onChange={(e) => setReplyInput(e.target.value)}
+                  placeholder="اكتب ردك أو استفسارك الإضافي هنا..."
+                  className="flex-1 bg-gray-50 dark:bg-[#121214] border border-gray-200 dark:border-[#27272A] focus:border-emerald-500 rounded-xl px-4 py-2.5 text-xs sm:text-sm outline-hidden text-gray-900 dark:text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={isSendingReply || !replyInput.trim()}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>إرسال</span>
+                </button>
+              </form>
             </div>
           ) : (
+            /* Initial Inquiry Form */
             <form onSubmit={handleSubmit} className="space-y-4">
               {errorMsg && (
                 <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-600 dark:text-rose-400 text-xs font-semibold">
@@ -244,7 +526,7 @@ ${cleanMessage}
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="اكتب رسالتك أو سؤالك حول المنتجات أو الطلبات هنا..."
+                  placeholder="اكتب استفسارك أو طلبك هنا..."
                   rows={4}
                   required
                   className="w-full bg-gray-50 dark:bg-[#121214] border border-gray-200 dark:border-[#27272A] focus:border-emerald-500 rounded-xl p-3 text-xs sm:text-sm text-gray-900 dark:text-white outline-hidden resize-none"
@@ -265,13 +547,11 @@ ${cleanMessage}
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold px-6 py-2.5 rounded-xl text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer shadow-md"
                 >
                   {isSubmitting ? (
-                    <>
-                      <span>جاري إرسال الرسالة...</span>
-                    </>
+                    <span>جاري إرسال الرسالة...</span>
                   ) : (
                     <>
                       <Send className="w-4 h-4" />
-                      <span>إرسال الرسالة للإدارة</span>
+                      <span>بدء المحادثة مع الإدارة</span>
                     </>
                   )}
                 </button>
@@ -281,7 +561,7 @@ ${cleanMessage}
         </div>
 
         {/* Footer info */}
-        <div className="p-3 bg-gray-50 dark:bg-[#18181B] border-t border-[#EAEAEA] dark:border-[#27272A] text-center text-[10px] text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
+        <div className="p-3 bg-gray-50 dark:bg-[#18181C] border-t border-[#EAEAEA] dark:border-[#27272A] text-center text-[10px] text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
           <span>رسالتك محمية وتصل بشكل مباشر وفوري إلى لوحة تحكم إدارة المتجر</span>
         </div>
