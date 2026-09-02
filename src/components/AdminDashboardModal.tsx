@@ -49,7 +49,9 @@ import { getProductImageUrl } from '../utils/image';
 import { 
   updateOrderStatusEverywhere, 
   deleteOrderEverywhere,
-  subscribeToOrdersRealtime 
+  subscribeToOrdersRealtime,
+  getLocalOrders,
+  fetchAllOrdersCombined
 } from '../services/ordersFirestoreService';
 import { 
   deleteProductFromFirestore,
@@ -126,7 +128,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [newOrderAlertBanner, setNewOrderAlertBanner] = useState<Order | null>(null);
 
   // Orders State
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>(() => {
+    try {
+      return getLocalOrders();
+    } catch {
+      return [];
+    }
+  });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [activeFilter, setActiveFilter] = useState<'all' | OrderStatus>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -944,6 +952,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     };
     window.addEventListener('queen_order_deleted', handleSameTabDeletion as any);
     
+    const handleStorageChange = (e: StorageEvent) => {
+      if (!e.key || e.key.includes('order')) {
+        const local = getLocalOrders();
+        if (Array.isArray(local) && local.length > 0) {
+          setOrders(local);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
     const handleSameTabChatMessage = (e: any) => {
       const msg = e.detail?.message;
       fetchChatThreads();
@@ -969,6 +987,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       window.removeEventListener('queen_orders_updated', () => fetchOrders(true));
       window.removeEventListener('queen_order_deleted', handleSameTabDeletion as any);
       window.removeEventListener('queen_new_chat_message', handleSameTabChatMessage as any);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [isAuthenticated, soundEnabled, soundVolume, soundRepeats]);
 
@@ -1420,13 +1439,27 @@ ${text}
   }, [isAuthenticated, selectedChatOrderId]);
 
   const fetchOrders = async (silent: boolean = false) => {
-    if (!silent) setIsLoading(true);
+    if (!silent && orders.length === 0) setIsLoading(true);
     try {
-      // In real-time mode, data is synced via useEffect subscription.
-      // This manual trigger can be used for force-refresh if needed,
-      // but for now we just handle loading state.
+      const allOrders = await fetchAllOrdersCombined();
+      if (Array.isArray(allOrders)) {
+        setOrders(allOrders);
+        if (!isInitialFetchDoneRef.current) {
+          knownOrderIdsRef.current = new Set(allOrders.filter(Boolean).map((o) => o.id));
+          isInitialFetchDoneRef.current = true;
+        }
+      } else {
+        const local = getLocalOrders();
+        if (Array.isArray(local)) {
+          setOrders(local);
+        }
+      }
     } catch (e) {
       console.warn('Error fetching admin orders:', e);
+      const local = getLocalOrders();
+      if (Array.isArray(local) && local.length > 0) {
+        setOrders(local);
+      }
     } finally {
       if (!silent) setIsLoading(false);
     }
@@ -2126,6 +2159,11 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
               >
                 <Package className="w-4 h-4" />
                 <span>إدارة الطلبات ({stats.total})</span>
+                {stats.received > 0 && (
+                  <span className="bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full border border-black animate-pulse">
+                    {stats.received} جديد 🔔
+                  </span>
+                )}
               </button>
 
               <button
@@ -3365,7 +3403,15 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             </div>
 
             {/* Orders Cards List */}
-            {filteredOrders.length === 0 ? (
+            {isLoading && filteredOrders.length === 0 ? (
+              <div className="py-20 text-center space-y-4 bg-[#18181B] rounded-2xl border border-[#2E2E33]">
+                <div className="w-10 h-10 rounded-full border-3 border-[#D4AF37] border-t-transparent animate-spin mx-auto"></div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white">جاري مزامنة وجلب الطلبات...</h3>
+                  <p className="text-xs text-[#A1A1AA]">يتم جلب أحدث الطلبات والتحديثات السحابية تلقائياً ⏳</p>
+                </div>
+              </div>
+            ) : filteredOrders.length === 0 ? (
               <div className="py-16 text-center space-y-3 bg-[#18181B] rounded-2xl border border-[#2E2E33]">
                 <Package className="w-10 h-10 text-[#52525B] mx-auto" />
                 <h3 className="text-base font-bold text-white">لا توجد طلبات في هذا القسم</h3>

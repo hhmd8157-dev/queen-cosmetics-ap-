@@ -14,7 +14,6 @@ import {
   User, 
   FileText, 
   ArrowRight,
-  Tag,
   CheckCircle,
   AlertCircle,
   LocateFixed,
@@ -90,11 +89,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }));
   };
 
-  // Coupon state
-  const [couponCode, setCouponCode] = useState<string>('');
-  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number; isPercent: boolean } | null>(null);
-  const [couponError, setCouponError] = useState<string>('');
-
   // Form Validation & Submission
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string>('');
@@ -106,17 +100,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const isFreeDelivery = subtotal >= STORE_INFO.freeDeliveryThreshold;
   const deliveryFee = isFreeDelivery ? 0 : STORE_INFO.deliveryBasraCity;
 
-  // Coupon discount calculation
-  let discountAmount = 0;
-  if (appliedCoupon) {
-    if (appliedCoupon.isPercent) {
-      discountAmount = Math.round((subtotal * appliedCoupon.discount) / 100);
-    } else {
-      discountAmount = appliedCoupon.discount;
-    }
-  }
-
-  const finalTotal = Math.max(0, subtotal - discountAmount) + deliveryFee;
+  // Direct total calculation: Products Subtotal + Delivery Fee
+  const discountAmount = 0;
+  const finalTotal = subtotal + deliveryFee;
 
   // Handle GPS location retrieval
   const handleGetLocation = (e?: React.MouseEvent) => {
@@ -180,31 +166,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         maximumAge: 0,
       }
     );
-  };
-
-  const handleApplyCoupon = (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    setCouponError('');
-    const cleanCode = couponCode.trim().toUpperCase();
-
-    if (!cleanCode) return;
-
-    if (cleanCode === 'QUEEN10' || cleanCode === 'ملكة10') {
-      setAppliedCoupon({ code: cleanCode, discount: 10, isPercent: true });
-    } else if (cleanCode === 'CROWN' || cleanCode === 'تاج') {
-      setAppliedCoupon({ code: cleanCode, discount: 3000, isPercent: false });
-    } else {
-      setCouponError('رمز الكوبون غير صالح أو منتهي الصلاحية');
-    }
-  };
-
-  const handleRemoveCoupon = (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    setAppliedCoupon(null);
-    setCouponCode('');
-    setCouponError('');
   };
 
   async function sendEmailOrderNotification(orderDetails: { 
@@ -326,7 +287,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       subtotal,
       deliveryFee,
       discountAmount,
-      couponCode: appliedCoupon?.code,
       total: finalTotal,
       deliveryTiming,
       customTimingText,
@@ -348,7 +308,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         subtotal,
         deliveryFee,
         discountAmount,
-        couponCode: appliedCoupon?.code,
         total: finalTotal,
         deliveryTiming,
         customTimingText,
@@ -424,7 +383,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           cartItems,
           customer,
           deliveryFee,
-          appliedCoupon?.code,
+          undefined,
           discountAmount,
           location
         );
@@ -447,7 +406,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             cartItems,
             customer,
             deliveryFee,
-            appliedCoupon?.code,
+            undefined,
             discountAmount,
             location
           );
@@ -637,53 +596,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
               {/* D3 Purchase Budget Distribution Pie Chart */}
               <CartSpendChart cartItems={cartItems} />
-
-              {/* Coupon Code Section */}
-              <div className="bg-[#FAFAFA] dark:bg-[#1A1A20] p-3 rounded-xl border border-[#EAEAEA] dark:border-[#27272A] space-y-2">
-                <label className="text-xs font-medium text-[#1A1A1A] dark:text-white flex items-center gap-1.5">
-                  <Tag className="w-3.5 h-3.5 text-[#C5A059]" />
-                  <span>كوبون الخصم:</span>
-                </label>
-
-                {appliedCoupon ? (
-                  <div className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-lg text-xs">
-                    <span className="text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      تم تطبيق الكوبون ({appliedCoupon.code})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => handleRemoveCoupon(e)}
-                      className="text-[#999999] dark:text-[#A1A1AA] hover:text-rose-600 text-xs font-medium underline cursor-pointer"
-                    >
-                      إلغاء
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={couponCode}
-                      onChange={(e) => setCouponCode(e.target.value)}
-                      placeholder="أدخل الكوبون (مثال: QUEEN10)..."
-                      className="flex-1 bg-white dark:bg-[#141418] text-[#1A1A1A] dark:text-white border border-[#EAEAEA] dark:border-[#2E2E35] focus:border-[#C5A059] rounded-lg px-3 py-2 text-xs outline-hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={(e) => handleApplyCoupon(e)}
-                      className="bg-[#1A1A1A] dark:bg-[#C5A059] hover:bg-[#333333] dark:hover:bg-[#D4AF37] text-white dark:text-black font-semibold text-xs px-4 py-2 rounded-lg transition-colors cursor-pointer shrink-0"
-                    >
-                      تطبيق
-                    </button>
-                  </div>
-                )}
-                {couponError && (
-                  <p className="text-[11px] text-rose-600 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    {couponError}
-                  </p>
-                )}
-              </div>
 
               {/* Customer Delivery Details Section - Simplified Flow */}
               <div className="bg-[#FAFAFA] dark:bg-[#1A1A20] p-4 rounded-xl border border-[#EAEAEA] dark:border-[#27272A] space-y-4">
@@ -907,13 +819,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <span>المجموع الفرعي:</span>
                 <span className="font-semibold text-[#1A1A1A] dark:text-white">{formatIQD(subtotal)}</span>
               </div>
-
-              {discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-semibold">
-                  <span>الخصم ({appliedCoupon?.code}):</span>
-                  <span>-{formatIQD(discountAmount)}</span>
-                </div>
-              )}
 
               <div className="flex justify-between text-[#666666] dark:text-[#A1A1AA]">
                 <span>أجور التوصيل:</span>

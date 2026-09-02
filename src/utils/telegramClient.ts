@@ -2,10 +2,57 @@
 const DEFAULT_BOT_TOKEN = '8730831848:AAHJ7xkm6CKTH1X-1afTNNbmL9f4nkru9t4';
 const DEFAULT_CHAT_ID = '7355854532';
 
-export async function sendTelegramDirectClientSide(text: string, botToken = DEFAULT_BOT_TOKEN, chatId = DEFAULT_CHAT_ID): Promise<boolean> {
+/**
+ * Gets all target chat IDs from localStorage or defaults
+ */
+function getTargetChatIds(explicitChatId?: string): string[] {
+  const ids = new Set<string>();
+  if (explicitChatId && explicitChatId.trim()) {
+    ids.add(explicitChatId.trim());
+  } else {
+    ids.add(DEFAULT_CHAT_ID);
+  }
+
   try {
-    const token = botToken.trim();
-    const targetChat = chatId.trim() || DEFAULT_CHAT_ID;
+    const raw = localStorage.getItem('queen_telegram_config');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed) {
+        if (parsed.chatId && typeof parsed.chatId === 'string' && parsed.chatId.trim()) {
+          ids.add(parsed.chatId.trim());
+        }
+        if (Array.isArray(parsed.chatIds)) {
+          parsed.chatIds.forEach((id: string) => {
+            if (id && typeof id === 'string' && id.trim()) {
+              ids.add(id.trim());
+            }
+          });
+        }
+      }
+    }
+  } catch {}
+
+  return Array.from(ids);
+}
+
+function getActiveBotToken(explicitToken?: string): string {
+  if (explicitToken && explicitToken.trim()) return explicitToken.trim();
+  try {
+    const raw = localStorage.getItem('queen_telegram_config');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.botToken && typeof parsed.botToken === 'string' && parsed.botToken.trim()) {
+        return parsed.botToken.trim();
+      }
+    }
+  } catch {}
+  return DEFAULT_BOT_TOKEN;
+}
+
+export async function sendTelegramDirectClientSide(text: string, botToken?: string, chatId?: string): Promise<boolean> {
+  try {
+    const token = getActiveBotToken(botToken);
+    const targetChats = getTargetChatIds(chatId);
     
     if (!token) {
       console.warn('[Telegram Client] No bot token provided');
@@ -13,25 +60,34 @@ export async function sendTelegramDirectClientSide(text: string, botToken = DEFA
     }
 
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: targetChat,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-    });
+    let anySuccess = false;
 
-    const data = await res.json();
-    if (data.ok) {
-      console.log('[Telegram Client] Notification sent successfully');
-      return true;
-    } else {
-      console.warn('[Telegram Client] Telegram API rejected message:', data.description);
-      return false;
+    for (const targetChat of targetChats) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: targetChat,
+            text,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.ok) {
+          console.log(`[Telegram Client] Notification sent successfully to chat ${targetChat}`);
+          anySuccess = true;
+        } else {
+          console.warn(`[Telegram Client] Telegram API response for chat ${targetChat}:`, data.description);
+        }
+      } catch (chatErr) {
+        console.warn(`[Telegram Client] Error sending to chat ${targetChat}:`, chatErr);
+      }
     }
+
+    return anySuccess;
   } catch (err) {
     console.error('[Telegram Client] Network error sending notification:', err);
     return false;
