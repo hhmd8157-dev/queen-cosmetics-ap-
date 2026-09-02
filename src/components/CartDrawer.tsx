@@ -393,7 +393,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
       // 3. Send email notification in background (non-blocking)
       try {
-        const itemsSummary = cartItems.map((i) => `• ${i.product.name} (عدد: ${i.quantity} - السعر: ${formatIQD(i.product.price)})`).join('\n');
+        const itemsSummary = (Array.isArray(cartItems) ? cartItems : []).map((i) => `• ${i.product.name} (عدد: ${i.quantity} - السعر: ${formatIQD(i.product.price)})`).join('\n');
         sendEmailOrderNotification({
           name: customer.name,
           phone: customer.phone,
@@ -574,11 +574,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               {/* Cart Items List */}
               <div className="space-y-3">
                 <h3 className="font-bold text-xs text-[#666666] dark:text-[#A1A1AA] flex items-center gap-1.5">
-                  <span>المنتجات المحددة ({cartItems.reduce((acc, i) => acc + i.quantity, 0)})</span>
+                  <span>المنتجات المحددة ({(Array.isArray(cartItems) ? cartItems.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)})</span>
                 </h3>
 
                 <div className="divide-y divide-[#EAEAEA] dark:divide-[#27272A] border border-[#EAEAEA] dark:border-[#27272A] rounded-xl overflow-hidden bg-white dark:bg-[#18181C] shadow-2xs">
-                  {cartItems.map((item) => (
+                  {Array.isArray(cartItems) && cartItems.map((item) => (
                     <div key={item.product.id} className="p-3 flex gap-3 items-center">
                       {item.product.image ? (
                         <img

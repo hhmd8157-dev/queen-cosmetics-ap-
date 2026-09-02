@@ -785,7 +785,7 @@ export default function App() {
                 : 'flex flex-col gap-3.5 sm:gap-4'
             }
           >
-            {filteredProducts.map((product, index) => {
+            {(Array.isArray(filteredProducts) ? filteredProducts : []).map((product, index) => {
               const cartItem = cart.find((i) => i.product.id === product.id);
               const isInWishlist = wishlist.some((p) => p.id === product.id);
 

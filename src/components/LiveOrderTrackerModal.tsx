@@ -691,9 +691,9 @@ ${itemsText}
   const breakdownPieData = useMemo(() => {
     if (!order) return [];
 
-    const itemsData = order.items.map((item, idx) => ({
-      name: item.product.name,
-      value: item.product.price * item.quantity,
+    const itemsData = (Array.isArray(order?.items) ? order.items : []).map((item, idx) => ({
+      name: item?.product?.name || 'منتج',
+      value: (item?.product?.price || 0) * (item?.quantity || 1),
       color: ['#C5A059', '#3B82F6', '#8B5CF6', '#EC4899', '#10B981', '#F59E0B'][idx % 6],
     }));
 
@@ -1341,11 +1341,11 @@ ${itemsText}
                   <div>
                     <h4 className="font-bold text-xs text-[#1A1A1A] dark:text-white flex items-center gap-1.5 border-b border-[#EAEAEA] dark:border-[#27272A] pb-2">
                       <ShoppingBag className="w-4 h-4 text-[#C5A059]" />
-                      <span>المنتجات المطلوبة ({order.items.reduce((acc, i) => acc + i.quantity, 0)})</span>
+                      <span>المنتجات المطلوبة ({(Array.isArray(order?.items) ? order.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)})</span>
                     </h4>
 
                     <div className="space-y-2 text-xs mt-3 max-h-36 overflow-y-auto pr-1">
-                      {order.items.map((item, idx) => (
+                      {Array.isArray(order?.items) && order.items.map((item, idx) => (
                         <div key={idx} className="flex items-center justify-between gap-2 py-1 border-b border-[#EAEAEA]/60 dark:border-[#27272A] last:border-0">
                           <div className="flex items-center gap-2 min-w-0">
                             {item.product.image ? (

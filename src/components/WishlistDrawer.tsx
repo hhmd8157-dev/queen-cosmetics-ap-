@@ -95,7 +95,7 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
               </button>
             </div>
           ) : (
-            wishlist.map((product) => (
+            (Array.isArray(wishlist) ? wishlist : []).map((product) => (
               <div
                 key={product.id}
                 className="flex items-center gap-3 p-3 bg-white dark:bg-[#18181C] rounded-xl border border-[#EAEAEA] dark:border-[#27272A] hover:border-[#C5A059]/40 transition-colors"

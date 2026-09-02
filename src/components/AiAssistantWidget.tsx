@@ -275,7 +275,7 @@ export const AiAssistantWidget: React.FC = () => {
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs sm:text-sm bg-[#0E0E10]/90">
-              {messages.map((msg) => {
+              {(Array.isArray(messages) ? messages : []).map((msg) => {
                 const isUser = msg.role === 'user';
                 return (
                   <motion.div

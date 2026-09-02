@@ -409,7 +409,7 @@ export const ProductReviewsSection: React.FC<ProductReviewsSectionProps> = ({ pr
             )}
           </div>
         ) : (
-          sortedReviews.map((rev) => {
+          (Array.isArray(sortedReviews) ? sortedReviews : []).map((rev) => {
             const isLiked = likedReviews[rev.id];
             const currentLikes = (rev.likes || 0) + (isLiked ? 1 : 0);
 

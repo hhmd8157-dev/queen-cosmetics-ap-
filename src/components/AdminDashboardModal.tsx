@@ -1579,8 +1579,8 @@ ${text}
   };
 
   const handleCopyDispatchText = (order: Order) => {
-    const itemsList = order.items
-      .map((i) => `- ${i.product.name} (عدد: ${i.quantity})`)
+    const itemsList = (Array.isArray(order?.items) ? order.items : [])
+      .map((i) => `- ${i?.product?.name || 'منتج'} (عدد: ${i?.quantity || 1})`)
       .join('\n');
 
     const text = `👑 *طلب توصيل جديد - كوزمتك الملكة* 👑
@@ -2644,7 +2644,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     </span>
                   </div>
 
-                  {(!telegramStatus?.config?.chatIds || telegramStatus.config.chatIds.length === 0) ? (
+                  {(!Array.isArray(telegramStatus?.config?.chatIds) || telegramStatus.config.chatIds.length === 0) ? (
                     <div className="bg-black/30 border border-dashed border-[#2E2E33] p-4 rounded-xl text-center space-y-2">
                       <p className="text-xs text-amber-300 font-semibold">
                         لم يتم تسجيل أي حساب بعد!
@@ -3552,7 +3552,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                           <div className="flex items-center justify-between">
                             <h4 className="font-semibold text-xs text-[#A1A1AA] flex items-center gap-1.5">
                               <ShoppingBag className="w-3.5 h-3.5 text-[#D4AF37]" />
-                              <span>المنتجات المطلوبة ({order.items.reduce((acc, i) => acc + i.quantity, 0)} قطع):</span>
+                              <span>المنتجات المطلوبة ({(Array.isArray(order?.items) ? order.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطع):</span>
                             </h4>
 
                             <button
@@ -3566,7 +3566,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                           {isExpanded && (
                             <div className="bg-[#121214] p-3 rounded-xl border border-[#27272A] space-y-2 text-xs">
-                              {order.items.map((item, idx) => (
+                              {Array.isArray(order?.items) && order.items.map((item, idx) => (
                                 <div
                                   key={idx}
                                   onClick={() => setSelectedProductDetail({ product: item.product, quantity: item.quantity })}
@@ -3726,7 +3726,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h4 className="font-extrabold text-sm text-[#FFE58F]">
-                  قائمة المنتجات المطلوبة ({fullScreenOrderModal.items.reduce((acc, i) => acc + i.quantity, 0)} قطع) - انقر على أي منتج لعرض تفاصيله الكاملة:
+                  قائمة المنتجات المطلوبة ({(Array.isArray(fullScreenOrderModal?.items) ? fullScreenOrderModal.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطع) - انقر على أي منتج لعرض تفاصيله الكاملة:
                 </h4>
                 <span className="font-bold text-emerald-400 text-sm">
                   المجموع الكلي: {formatIQD(fullScreenOrderModal.total)}
@@ -3734,7 +3734,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {fullScreenOrderModal.items.map((item, idx) => (
+                {Array.isArray(fullScreenOrderModal?.items) && fullScreenOrderModal.items.map((item, idx) => (
                   <div
                     key={idx}
                     onClick={() => setSelectedProductDetail({ product: item.product, quantity: item.quantity })}

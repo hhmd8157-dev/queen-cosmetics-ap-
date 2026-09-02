@@ -82,7 +82,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   if (!product) return null;
 
   const isOutOfStock = product.inStock === false || product.stockCount === 0;
-  const images = [getProductImageUrl(product), ...(product.additionalImages?.map(img => getProductImageUrl({ image: img })) || [])];
+  const images = [
+    getProductImageUrl(product),
+    ...(Array.isArray(product?.additionalImages) ? product.additionalImages.map(img => getProductImageUrl({ image: img })) : [])
+  ];
 
   const handleAddToCart = () => {
     if (isOutOfStock) {
@@ -346,7 +349,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </div>
 
                 {/* Benefits */}
-                {product.benefits && product.benefits.length > 0 && (
+                {Array.isArray(product.benefits) && product.benefits.length > 0 && (
                   <div className="space-y-1">
                     <h4 className="text-xs font-semibold text-[#1A1A1A] dark:text-[#E4E4E7]">المميزات والفوائد:</h4>
                     <ul className="space-y-1">
