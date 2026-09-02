@@ -878,17 +878,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const handleBroadcastMessage = (e: MessageEvent) => {
       if (e.data?.type === 'NEW_ORDER' && e.data?.order) {
         const orderData = e.data.order;
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === orderData.id || o.trackingCode === orderData.trackingCode)) {
+            return prev.map((o) => (o.id === orderData.id || o.trackingCode === orderData.trackingCode ? orderData : o));
+          }
+          return [orderData, ...prev];
+        });
         if (!knownOrderIdsRef.current.has(orderData.id)) {
           knownOrderIdsRef.current.add(orderData.id);
           triggerNewOrderAlert(orderData);
-          fetchOrders(true);
         }
       } else if (e.data?.type === 'ORDER_DELETED' && e.data?.payload?.orderId) {
         const delId = e.data.payload.orderId;
         setOrders((prev) => prev.filter((o) => o.id !== delId && o.trackingCode !== delId));
-      } else if (e.data?.type === 'NEW_CHAT_MESSAGE') {
+      } else if (e.data?.type === 'NEW_CHAT_MESSAGE' && e.data?.payload) {
+        const msg = e.data.payload;
         fetchChatThreads();
-        if (soundEnabled) {
+        if (selectedChatOrderId && (msg.orderId || msg.trackingCode || '').toUpperCase() === selectedChatOrderId.toUpperCase()) {
+          setSelectedChatMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) {
+              return prev.map((m) => (m.id === msg.id ? msg : m));
+            }
+            return [...prev, msg];
+          });
+        }
+        if (soundEnabled && msg.sender === 'customer') {
           try {
             const audio = new Audio('/notification.mp3');
             audio.volume = soundVolume / 100;
@@ -905,13 +919,22 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     // Window custom event listener for same tab
     const handleSameTabOrder = (e: any) => {
       const order = e.detail;
-      if (order && !knownOrderIdsRef.current.has(order.id)) {
-        knownOrderIdsRef.current.add(order.id);
-        triggerNewOrderAlert(order);
-        fetchOrders(true);
+      if (order) {
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === order.id || o.trackingCode === order.trackingCode)) {
+            return prev.map((o) => (o.id === order.id || o.trackingCode === order.trackingCode ? order : o));
+          }
+          return [order, ...prev];
+        });
+        if (!knownOrderIdsRef.current.has(order.id)) {
+          knownOrderIdsRef.current.add(order.id);
+          triggerNewOrderAlert(order);
+        }
       }
     };
     window.addEventListener('queen_new_order_event', handleSameTabOrder);
+    window.addEventListener('queen_new_order', handleSameTabOrder);
+    window.addEventListener('queen_orders_updated', () => fetchOrders(true));
 
     const handleSameTabDeletion = (e: any) => {
       const { orderId } = e.detail;
@@ -922,9 +945,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     window.addEventListener('queen_order_deleted', handleSameTabDeletion as any);
     
     const handleSameTabChatMessage = (e: any) => {
+      const msg = e.detail?.message;
       fetchChatThreads();
-      if (selectedChatOrderId && e.detail?.message?.orderId === selectedChatOrderId) {
-        fetchSelectedChatMessages(selectedChatOrderId);
+      if (selectedChatOrderId && msg && (msg.orderId || msg.trackingCode || '').toUpperCase() === selectedChatOrderId.toUpperCase()) {
+        setSelectedChatMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) {
+            return prev.map((m) => (m.id === msg.id ? msg : m));
+          }
+          return [...prev, msg];
+        });
       }
     };
     window.addEventListener('queen_new_chat_message', handleSameTabChatMessage as any);
@@ -936,6 +965,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         channel.removeEventListener('message', handleBroadcastMessage);
       }
       window.removeEventListener('queen_new_order_event', handleSameTabOrder);
+      window.removeEventListener('queen_new_order', handleSameTabOrder);
+      window.removeEventListener('queen_orders_updated', () => fetchOrders(true));
       window.removeEventListener('queen_order_deleted', handleSameTabDeletion as any);
       window.removeEventListener('queen_new_chat_message', handleSameTabChatMessage as any);
     };
@@ -967,6 +998,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     cloudThreads.forEach((t) => {
       const code = t.orderId.toUpperCase();
       const existing = threadMap.get(code);
+      const isReplied = t.isReplied || t.lastMessageSender === 'admin' || !t.unreadByAdmin;
       threadMap.set(code, {
         orderId: code,
         customerName: t.customerName || existing?.customerName || 'زبون الدعم',
@@ -977,6 +1009,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         lastMessage: t.lastMessageText || t.lastMessage || existing?.lastMessage || 'رسالة دعم',
         lastMessageTime: t.lastMessageAt || t.lastMessageTime || existing?.lastMessageTime || new Date().toISOString(),
         unreadCount: t.unreadByAdmin ? 1 : 0,
+        isReplied: isReplied,
+        status: isReplied ? 'replied' : 'pending',
         messageCount: t.messageCount || existing?.messageCount || 1,
       });
     });
@@ -990,18 +1024,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           if (!sc.text) return;
           const code = (sc.orderId || sc.trackingCode || 'SUPP-1000').toUpperCase();
           const existing = threadMap.get(code);
+          const isMsgFromAdmin = sc.sender === 'admin' || sc.readByAdmin === true || sc.status === 'replied';
           
           if (!existing || new Date(sc.createdAt || 0).getTime() > new Date(existing.lastMessageTime || 0).getTime()) {
             threadMap.set(code, {
               orderId: code,
-              customerName: sc.senderName || sc.customerName || 'زبون الدعم',
-              customerPhone: sc.customerPhone || '',
-              governorate: sc.governorate || 'العراق',
+              customerName: sc.senderName || sc.customerName || existing?.customerName || 'زبون الدعم',
+              customerPhone: sc.customerPhone || existing?.customerPhone || '',
+              governorate: sc.governorate || existing?.governorate || 'العراق',
               orderStatus: existing?.orderStatus || 'received',
               orderTotal: existing?.orderTotal || 0,
               lastMessage: sc.text || 'رسالة دعم فني',
               lastMessageTime: sc.createdAt || new Date().toISOString(),
-              unreadCount: (existing?.unreadCount || 0) + (sc.readByAdmin ? 0 : 1),
+              unreadCount: isMsgFromAdmin ? 0 : (existing?.unreadCount || 0) + (sc.readByAdmin ? 0 : 1),
+              isReplied: isMsgFromAdmin || existing?.isReplied || false,
+              status: isMsgFromAdmin ? 'replied' : 'pending',
               messageCount: (existing?.messageCount || 0) + 1,
             });
           }
@@ -1026,6 +1063,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               lastMessage: 'طلب جديد تم إنشاؤه',
               lastMessageTime: o.createdAt,
               unreadCount: 0,
+              isReplied: false,
+              status: 'pending',
               messageCount: 0,
             });
           }
@@ -1078,6 +1117,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 createdAt: sc.createdAt || new Date().toISOString(),
                 readByAdmin: sc.readByAdmin || false,
                 readByCustomer: sc.readByCustomer || true,
+                status: sc.status || 'pending',
               });
             }
           }
@@ -1097,26 +1137,91 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setAdminChatInput('');
     setIsSendingAdminChat(true);
 
+    const activeThread = chatThreads.find((t) => t.orderId.toUpperCase() === selectedChatOrderId.toUpperCase());
+
     const localMsg: any = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       orderId: selectedChatOrderId,
+      trackingCode: selectedChatOrderId,
       sender: 'admin',
       senderName: 'إدارة كوزمتك الملكة 👑',
       text,
       createdAt: new Date().toISOString(),
       readByAdmin: true,
       readByCustomer: false,
+      status: 'replied',
     };
 
     setSelectedChatMessages((prev) => [...prev, localMsg]);
 
-    // Save to Firestore Cloud Real-time Database
+    // 1. Save to all unified LocalStorage keys
+    const CHAT_KEYS = ['queen_pending_support_chats', 'messages', 'chat_messages', 'queen_chat_messages'];
+    CHAT_KEYS.forEach((key) => {
+      try {
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        existing.forEach((m: any) => {
+          if ((m.orderId || m.trackingCode || '').toUpperCase() === selectedChatOrderId.toUpperCase()) {
+            m.readByAdmin = true;
+            m.status = 'replied';
+          }
+        });
+        existing.push(localMsg);
+        localStorage.setItem(key, JSON.stringify(existing));
+      } catch {}
+    });
+
+    // 2. Broadcast via window custom event and BroadcastChannel for instant client display
+    try {
+      window.dispatchEvent(new CustomEvent('queen_new_chat_message', { detail: { message: localMsg } }));
+      const channel = new BroadcastChannel('queen_orders_channel');
+      channel.postMessage({ type: 'NEW_CHAT_MESSAGE', payload: localMsg, timestamp: Date.now() });
+      channel.close();
+    } catch {}
+
+    // 3. Dispatch directly to Telegram Bot API
+    try {
+      const tgReplyText = `👑 <b>رد من إدارة كوزمتك الملكة</b> 💬
+━━━━━━━━━━━━━━━━━━━━
+🔖 <b>رقم المحادثة/الطلب:</b> <code>#${selectedChatOrderId}</code>
+👤 <b>الزبون:</b> <b>${activeThread?.customerName || 'زبون المتجر'}</b>
+📞 <b>الهاتف:</b> <code>${activeThread?.customerPhone || '-'}</code>
+
+💬 <b>نص رد الإدارة:</b>
+${text}
+━━━━━━━━━━━━━━━━━━━━
+<i>تم الإرسال والرد مباشرة من لوحة التحكم</i> 🟢`;
+
+      const { sendTelegramDirectClientSide } = await import('../utils/telegramClient');
+      sendTelegramDirectClientSide(tgReplyText).catch(() => {});
+    } catch (tgErr) {
+      console.warn('Telegram reply dispatch notice:', tgErr);
+    }
+
+    // 4. Save to Firestore Cloud Database
     try {
       await sendChatMessageToFirestore(localMsg);
     } catch (err) {
       console.warn('Firestore admin chat send notice:', err);
     }
 
+    // 5. Update local threads state immediately to show "تم الرد"
+    setChatThreads((prev) =>
+      prev.map((t) =>
+        t.orderId.toUpperCase() === selectedChatOrderId.toUpperCase()
+          ? {
+              ...t,
+              lastMessage: text,
+              lastMessageTime: localMsg.createdAt,
+              unreadCount: 0,
+              isReplied: true,
+              status: 'replied',
+              messageCount: t.messageCount + 1,
+            }
+          : t
+      )
+    );
+
+    // 6. Post to backend API
     try {
       const res = await fetch(`/api/chats/${selectedChatOrderId}/messages`, {
         method: 'POST',
@@ -1134,7 +1239,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           const data = JSON.parse(resText);
           if (data && data.message) {
             setSelectedChatMessages((prev) => prev.map((m) => m.id === localMsg.id ? data.message : m));
-            fetchChatThreads();
           }
         }
       }
@@ -2182,9 +2286,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                   #{thread.orderId}
                                 </span>
 
-                                {thread.unreadCount > 0 && (
-                                  <span className="bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full animate-pulse">
-                                    {thread.unreadCount} جديد
+                                {thread.unreadCount > 0 ? (
+                                  <span className="bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full animate-pulse shadow-sm">
+                                    {thread.unreadCount} جديد 🔔
+                                  </span>
+                                ) : (
+                                  <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                    <span>تم الرد</span>
+                                    <span>🟢</span>
                                   </span>
                                 )}
                               </div>

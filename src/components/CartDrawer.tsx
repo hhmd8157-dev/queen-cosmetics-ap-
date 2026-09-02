@@ -284,7 +284,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   }
 
   // Direct In-App Checkout with multi-layer persistence (Firestore + LocalStorage + Backend API)
-  const handleDirectCheckout = async (e?: React.MouseEvent) => {
+  const handleDirectCheckout = async (e?: React.MouseEvent, isWhatsApp = false) => {
     e?.preventDefault();
     e?.stopPropagation();
     setFormError('');
@@ -334,7 +334,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       status: 'received',
       createdAt: new Date().toISOString(),
       statusUpdatedAt: new Date().toISOString(),
-      driverNotes: '',
+      driverNotes: isWhatsApp ? 'طلب مرسل عبر واتساب 💬' : '',
     };
 
     try {
@@ -383,7 +383,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         console.warn('Backend server /api/orders unreachable, proceeding with client cloud/local storage:', apiErr);
       }
 
-      // 2. Permanently save across Firestore and LocalStorage
+      // 2. Permanently save across Firestore, unified LocalStorage, and broadcast channels
       await saveOrderPermanently(confirmedOrder);
 
       // Direct client-side Telegram dispatch as robust production backup for Vercel/Static hosting
@@ -418,17 +418,41 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         origin: { y: 0.6 },
       });
 
-      // 5. Clear cart and close drawer
+      // 5. If WhatsApp was requested, launch WhatsApp
+      if (isWhatsApp) {
+        const whatsappUrl = generateCartWhatsAppUrl(
+          cartItems,
+          customer,
+          deliveryFee,
+          appliedCoupon?.code,
+          discountAmount,
+          location
+        );
+        window.open(whatsappUrl, '_blank');
+      }
+
+      // 6. Clear cart and close drawer
       onClearCart();
       onClose();
 
-      // 6. Transition to "تم استلام طلبك بنجاح" tracking screen!
+      // 7. Transition to "تم استلام طلبك بنجاح" tracking screen!
       onOrderPlaced(confirmedOrder.trackingCode, confirmedOrder);
     } catch (err: any) {
       console.error('Checkout notice (saving to guaranteed local storage):', err);
       // Guarantee order is never lost even under extreme conditions
       try {
         await saveOrderPermanently(confirmedOrder);
+        if (isWhatsApp) {
+          const whatsappUrl = generateCartWhatsAppUrl(
+            cartItems,
+            customer,
+            deliveryFee,
+            appliedCoupon?.code,
+            discountAmount,
+            location
+          );
+          window.open(whatsappUrl, '_blank');
+        }
         onClearCart();
         onClose();
         onOrderPlaced(confirmedOrder.trackingCode, confirmedOrder);
@@ -930,18 +954,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               type="button"
               id="cart-whatsapp-order-btn"
               onClick={async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                await handleDirectCheckout(e);
-                const whatsappUrl = generateCartWhatsAppUrl(
-                  cartItems,
-                  customer,
-                  deliveryFee,
-                  appliedCoupon?.code,
-                  discountAmount,
-                  location
-                );
-                window.open(whatsappUrl, '_blank');
+                await handleDirectCheckout(e, true);
               }}
               disabled={isSubmitting}
               className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"

@@ -58,7 +58,7 @@ export function subscribeToChatRealtime(
 /**
  * Save a single chat message to Firestore
  */
-export async function sendChatMessageToFirestore(msg: ChatMessage & { customerPhone?: string; governorate?: string }): Promise<void> {
+export async function sendChatMessageToFirestore(msg: ChatMessage & { customerPhone?: string; governorate?: string; status?: string }): Promise<void> {
   const threadId = msg.orderId.toUpperCase();
   const docId = msg.id || `msg-${Date.now()}`;
   const docRef = doc(db, CHATS_COLLECTION, threadId, 'messages', docId);
@@ -70,18 +70,29 @@ export async function sendChatMessageToFirestore(msg: ChatMessage & { customerPh
     createdAt: msg.createdAt || new Date().toISOString()
   }, { merge: true });
 
-  // Update a top-level document for the thread to help with discovery
+  // Update a top-level document for the thread to help with discovery and real-time thread tracking
   const threadRef = doc(db, CHATS_COLLECTION, threadId);
-  await setDoc(threadRef, {
-    lastMessageAt: new Date().toISOString(),
+  const isAdmin = msg.sender === 'admin';
+
+  const threadUpdate: any = {
+    lastMessageAt: msg.createdAt || new Date().toISOString(),
     lastMessageText: msg.text,
+    lastMessageSender: msg.sender,
     orderId: threadId,
-    unreadByAdmin: !msg.readByAdmin,
-    unreadByCustomer: !msg.readByCustomer,
-    customerName: msg.senderName || msg.sender || 'زبون الدعم',
-    customerPhone: msg.customerPhone || '',
-    governorate: msg.governorate || 'العراق'
-  }, { merge: true });
+    unreadByAdmin: isAdmin ? false : true,
+    unreadByCustomer: isAdmin ? true : false,
+    isReplied: isAdmin ? true : false,
+    status: isAdmin ? 'replied' : 'pending',
+  };
+
+  // Only attach/update customer details if message came from customer
+  if (!isAdmin) {
+    if (msg.senderName) threadUpdate.customerName = msg.senderName;
+    if (msg.customerPhone) threadUpdate.customerPhone = msg.customerPhone;
+    if (msg.governorate) threadUpdate.governorate = msg.governorate;
+  }
+
+  await setDoc(threadRef, threadUpdate, { merge: true });
 }
 
 /**

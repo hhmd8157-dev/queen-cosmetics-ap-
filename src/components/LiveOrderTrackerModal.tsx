@@ -204,16 +204,21 @@ export const LiveOrderTrackerModal: React.FC<LiveOrderTrackerModalProps> = ({
     setChatInput('');
     setIsSendingChat(true);
 
+    const primaryOrderId = (order.trackingCode || order.id || '').toUpperCase();
+
     const localMsg: any = {
-      id: `msg-${Date.now()}`,
-      orderId: order.id,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      orderId: primaryOrderId,
       trackingCode: order.trackingCode,
       sender: 'customer',
-      senderName: order.customer.name,
+      senderName: order.customer.name || 'الزبون',
+      customerPhone: order.customer.phone || '',
+      governorate: order.customer.governorate || 'العراق',
       text,
       createdAt: new Date().toISOString(),
       readByAdmin: false,
       readByCustomer: true,
+      status: 'pending',
     };
 
     setChatMessages((prev) => [...prev, localMsg]);
@@ -292,9 +297,12 @@ ${text}
     }
   };
 
-  // Real-time Firestore Chat Subscription
+  // Real-time Firestore & Local Chat Subscription
   useEffect(() => {
     if (!isOpen || !order?.trackingCode) return;
+
+    const primaryCode = order.trackingCode.toUpperCase();
+    const orderIdUpper = (order.id || '').toUpperCase();
 
     // Fetch initial messages from API/local cache once
     fetchChatMessages(order.trackingCode, activeTab === 'chat');
@@ -308,10 +316,58 @@ ${text}
       }
     });
 
+    // Also listen for same-tab custom events (e.g. Admin reply in same tab)
+    const handleIncomingChatMessage = (e: any) => {
+      const msg = e.detail?.message;
+      if (msg) {
+        const targetId = (msg.orderId || msg.trackingCode || '').toUpperCase();
+        if (targetId === primaryCode || targetId === orderIdUpper) {
+          setChatMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) {
+              return prev.map((m) => (m.id === msg.id ? msg : m));
+            }
+            return [...prev, msg];
+          });
+          if (msg.sender === 'admin' && activeTab !== 'chat') {
+            setUnreadChatCount((prev) => prev + 1);
+          }
+        }
+      }
+    };
+
+    // Also listen to cross-tab BroadcastChannel
+    let broadcastChannel: BroadcastChannel | null = null;
+    try {
+      broadcastChannel = new BroadcastChannel('queen_orders_channel');
+      broadcastChannel.onmessage = (event) => {
+        if (event.data?.type === 'NEW_CHAT_MESSAGE' && event.data?.payload) {
+          const msg = event.data.payload;
+          const targetId = (msg.orderId || msg.trackingCode || '').toUpperCase();
+          if (targetId === primaryCode || targetId === orderIdUpper) {
+            setChatMessages((prev) => {
+              if (prev.some((m) => m.id === msg.id)) {
+                return prev.map((m) => (m.id === msg.id ? msg : m));
+              }
+              return [...prev, msg];
+            });
+            if (msg.sender === 'admin' && activeTab !== 'chat') {
+              setUnreadChatCount((prev) => prev + 1);
+            }
+          }
+        }
+      };
+    } catch {}
+
+    window.addEventListener('queen_new_chat_message', handleIncomingChatMessage as any);
+
     return () => {
       unsubscribeChat();
+      window.removeEventListener('queen_new_chat_message', handleIncomingChatMessage as any);
+      if (broadcastChannel) {
+        broadcastChannel.close();
+      }
     };
-  }, [isOpen, order?.trackingCode, activeTab]);
+  }, [isOpen, order?.trackingCode, order?.id, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'chat') {
