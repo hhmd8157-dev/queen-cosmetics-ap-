@@ -30,7 +30,7 @@ import { generateCartWhatsAppUrl } from '../utils/whatsapp';
 import { getProductImageUrl } from '../utils/image';
 import { InteractiveMapPicker } from './InteractiveMapPicker';
 import { broadcastNewOrderLocally } from '../utils/alerts';
-import { saveOrderPermanently } from '../services/ordersFirestoreService';
+import { saveOrderPermanently, normalizeOrder, getLocalOrders, saveLocalOrders } from '../services/ordersFirestoreService';
 import { sendTelegramDirectClientSide, formatOrderMessageForClient } from '../utils/telegramClient';
 
 interface CartDrawerProps {
@@ -182,16 +182,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     total?: string | number; 
     trackingCode?: string;
   }) {
-    // 1. Save to localStorage
+    // 1. Save to localStorage safely via normalized storage
     try {
-      const existingOrders = JSON.parse(localStorage.getItem('cosmetic_local_orders') || '[]');
-      const newOrderRecord = {
-        ...orderDetails,
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem('cosmetic_local_orders', JSON.stringify([newOrderRecord, ...existingOrders]));
+      if (orderDetails.trackingCode) {
+        const norm = normalizeOrder(orderDetails);
+        const current = getLocalOrders();
+        saveLocalOrders([norm, ...current.filter((o) => o.trackingCode !== norm.trackingCode)]);
+      }
     } catch (e) {
-      console.error('Failed to save order to localStorage:', e);
+      console.error('Failed to sync order to localStorage:', e);
     }
 
     // 2. Send immediate POST request to our robust backend queue for owner email: alaaalrubaie38@gmail.com
@@ -271,18 +270,38 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
     setIsSubmitting(true);
 
-    // 1. Prepare reliable order object client-side immediately
+    // 1. Prepare complete order object containing:
+    // (id, customerName, phone, address, items, totalPrice, date, status: 'جديد')
     const localTrackingCode = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
     const localOrderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const orderDate = new Date().toISOString();
 
-    let confirmedOrder: Order = {
+    const rawOrderPayload: any = {
       id: localOrderId,
       trackingCode: localTrackingCode,
-      items: [...cartItems],
+      customerName: customer.name.trim(),
+      phone: customer.phone.trim(),
+      address: finalAddress,
+      items: cartItems.map((item) => ({
+        product: item.product,
+        quantity: item.quantity,
+        id: item.product.id,
+        name: item.product.name,
+        price: item.product.price,
+        image: item.product.image,
+      })),
+      totalPrice: finalTotal,
+      date: orderDate,
+      status: 'جديد',
       customer: {
-        ...customer,
+        name: customer.name.trim(),
+        phone: customer.phone.trim(),
         governorate: 'العراق',
+        district: customer.district || '',
+        nearestLandmark: customer.nearestLandmark || '',
+        houseDetails: customer.houseDetails || '',
         address: finalAddress,
+        notes: customer.notes?.trim() || '',
       },
       subtotal,
       deliveryFee,
@@ -291,20 +310,44 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       deliveryTiming,
       customTimingText,
       location,
-      status: 'received',
-      createdAt: new Date().toISOString(),
-      statusUpdatedAt: new Date().toISOString(),
+      createdAt: orderDate,
+      statusUpdatedAt: orderDate,
       driverNotes: isWhatsApp ? 'طلب مرسل عبر واتساب 💬' : '',
     };
 
+    let confirmedOrder: Order = normalizeOrder(rawOrderPayload);
+
+    // Direct Order Push (الحفظ المباشر في مصفوفة الطلبات المحلية للمتجر ولوحة التحكم)
+    try {
+      const currentOrders = getLocalOrders();
+      const updatedOrders = [
+        confirmedOrder,
+        ...currentOrders.filter((o) => o.id !== confirmedOrder.id && o.trackingCode !== confirmedOrder.trackingCode),
+      ];
+      saveLocalOrders(updatedOrders);
+      localStorage.setItem('active_order', JSON.stringify(confirmedOrder));
+      localStorage.setItem('queen_last_order_code', confirmedOrder.trackingCode);
+
+      // Instant dispatch to notify any open Admin Panel immediately
+      window.dispatchEvent(new CustomEvent('queen_new_order', { detail: confirmedOrder }));
+      window.dispatchEvent(new CustomEvent('queen_new_order_event', { detail: confirmedOrder }));
+      window.dispatchEvent(new Event('queen_orders_updated'));
+    } catch (pushErr) {
+      console.warn('Direct order push to local orders notice:', pushErr);
+    }
+
     try {
       const payload = {
+        id: confirmedOrder.id,
+        trackingCode: confirmedOrder.trackingCode,
+        customerName: (confirmedOrder as any).customerName || confirmedOrder.customer?.name || '',
+        phone: (confirmedOrder as any).phone || confirmedOrder.customer?.phone || '',
+        address: (confirmedOrder as any).address || confirmedOrder.customer?.address || '',
         items: cartItems,
-        customer: {
-          ...customer,
-          governorate: 'العراق',
-          address: finalAddress,
-        },
+        totalPrice: finalTotal,
+        date: orderDate,
+        status: 'جديد',
+        customer: confirmedOrder.customer,
         subtotal,
         deliveryFee,
         discountAmount,
@@ -331,7 +374,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             try {
               const data = JSON.parse(text);
               if (data && data.order) {
-                confirmedOrder = data.order;
+                confirmedOrder = normalizeOrder(data.order);
               }
             } catch (jsonErr) {
               console.warn('Backend response was not JSON:', jsonErr);
@@ -342,10 +385,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         console.warn('Backend server /api/orders unreachable, proceeding with client cloud/local storage:', apiErr);
       }
 
-      // 2. Permanently save across Firestore, unified LocalStorage, and broadcast channels
+      // 2. Permanently save across Firestore cloud database and broadcast channels
       await saveOrderPermanently(confirmedOrder);
 
-      // Direct client-side Telegram dispatch as robust production backup for Vercel/Static hosting
+      // 3. Direct client-side Telegram dispatch for instant synchronization
       sendTelegramDirectClientSide(formatOrderMessageForClient(confirmedOrder)).catch((tgErr) => {
         console.warn('Direct telegram client send notice:', tgErr);
       });

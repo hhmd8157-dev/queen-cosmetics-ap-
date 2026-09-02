@@ -21,6 +21,176 @@ const LOCAL_STORAGE_LAST_CODE_KEY = 'queen_last_order_code';
 const ORDERS_KEYS = ['queen_orders', 'orders', 'cosmetic_local_orders'];
 
 /**
+ * Normalizes any raw order object (from local storage, Firestore, or direct checkout)
+ * into a bulletproof Order model that satisfies both nested and flat schemas,
+ * and handles status 'جديد' / 'received' seamlessly.
+ */
+export function normalizeOrder(raw: any): Order {
+  if (!raw || typeof raw !== 'object') {
+    const fallbackId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const fallbackCode = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
+    const nowIso = new Date().toISOString();
+    return {
+      id: fallbackId,
+      trackingCode: fallbackCode,
+      items: [],
+      customer: {
+        name: 'زبون المتجر',
+        phone: '',
+        address: 'العراق',
+        governorate: 'العراق',
+      },
+      customerName: 'زبون المتجر',
+      phone: '',
+      address: 'العراق',
+      totalPrice: 0,
+      date: nowIso,
+      subtotal: 0,
+      deliveryFee: 0,
+      discountAmount: 0,
+      total: 0,
+      deliveryTiming: 'today',
+      status: 'received',
+      createdAt: nowIso,
+      statusUpdatedAt: nowIso,
+    } as any;
+  }
+
+  const id = String(raw.id || raw.trackingCode || `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`);
+  const rawCode = String(raw.trackingCode || raw.id || '');
+  const trackingCode = rawCode.startsWith('ORD-')
+    ? rawCode
+    : `ORD-${rawCode.replace(/^#?ORD-?/i, '') || Math.floor(1000 + Math.random() * 9000)}`;
+
+  // Extract customer information
+  const custObj = typeof raw.customer === 'object' && raw.customer !== null ? raw.customer : {};
+  const customerName = String(custObj.name || raw.customerName || raw.name || 'زبون المتجر').trim();
+  const customerPhone = String(custObj.phone || raw.phone || '').trim();
+  const customerGov = String(custObj.governorate || raw.governorate || 'العراق').trim();
+  const customerDistrict = custObj.district || raw.district || '';
+  const customerNearest = custObj.nearestLandmark || raw.nearestLandmark || '';
+  const customerHouse = custObj.houseDetails || raw.houseDetails || '';
+  const customerAddress = String(custObj.address || raw.address || customerGov || 'العراق').trim();
+  const customerNotes = String(custObj.notes || raw.notes || '').trim();
+
+  // Normalize items array safely
+  let items: any[] = [];
+  if (Array.isArray(raw.items)) {
+    items = raw.items.map((it: any, idx: number) => {
+      if (it && typeof it === 'object' && it.product) {
+        return {
+          product: {
+            id: it.product.id || `p-${idx}`,
+            name: it.product.name || 'منتج كوزمتك',
+            price: Number(it.product.price) || 0,
+            originalPrice: it.product.originalPrice ? Number(it.product.originalPrice) : undefined,
+            image: it.product.image || '',
+            brand: it.product.brand || 'كوزمتك الملكة',
+            category: it.product.category || 'العناية',
+          },
+          quantity: Math.max(1, Number(it.quantity) || 1),
+        };
+      } else if (it && typeof it === 'object') {
+        return {
+          product: {
+            id: it.id || `p-${idx}`,
+            name: it.name || it.title || 'منتج كوزمتك',
+            price: Number(it.price) || 0,
+            originalPrice: it.originalPrice ? Number(it.originalPrice) : undefined,
+            image: it.image || '',
+            brand: it.brand || 'كوزمتك الملكة',
+            category: it.category || 'العناية',
+          },
+          quantity: Math.max(1, Number(it.quantity) || 1),
+        };
+      }
+      return {
+        product: {
+          id: `p-${idx}`,
+          name: String(it || 'منتج كوزمتك'),
+          price: 0,
+          image: '',
+          brand: 'كوزمتك الملكة',
+        },
+        quantity: 1,
+      };
+    });
+  } else if (typeof raw.items === 'string' && raw.items.trim()) {
+    items = [
+      {
+        product: {
+          id: `p-${id}`,
+          name: raw.items.trim(),
+          price: Number(raw.totalPrice || raw.total) || 0,
+          image: '',
+          brand: 'كوزمتك الملكة',
+        },
+        quantity: 1,
+      },
+    ];
+  }
+
+  // Extract and calculate total numbers safely
+  let totalNum = 0;
+  if (typeof raw.total === 'number') totalNum = raw.total;
+  else if (typeof raw.totalPrice === 'number') totalNum = raw.totalPrice;
+  else if (typeof raw.total === 'string') {
+    totalNum = parseInt(raw.total.replace(/[^\d]/g, ''), 10) || 0;
+  } else if (typeof raw.totalPrice === 'string') {
+    totalNum = parseInt(raw.totalPrice.replace(/[^\d]/g, ''), 10) || 0;
+  }
+
+  const subtotal = Number(raw.subtotal) || totalNum;
+  const deliveryFee = raw.deliveryFee !== undefined ? Number(raw.deliveryFee) : 0;
+  const discountAmount = Number(raw.discountAmount) || 0;
+
+  // Status mapping: convert 'جديد' or 'new' to standard 'received' while keeping compatibility
+  let status: OrderStatus = 'received';
+  if (raw.status === 'preparing' || raw.status === 'out_for_delivery' || raw.status === 'delivered' || raw.status === 'cancelled') {
+    status = raw.status;
+  } else {
+    // If 'جديد', 'new', 'received', or undefined, default to 'received'
+    status = 'received';
+  }
+
+  const createdAt = raw.createdAt || raw.date || new Date().toISOString();
+  const statusUpdatedAt = raw.statusUpdatedAt || createdAt;
+
+  return {
+    ...raw,
+    id,
+    trackingCode,
+    customerName,
+    phone: customerPhone,
+    address: customerAddress,
+    totalPrice: totalNum,
+    date: createdAt,
+    customer: {
+      name: customerName,
+      phone: customerPhone,
+      governorate: customerGov,
+      district: customerDistrict,
+      nearestLandmark: customerNearest,
+      houseDetails: customerHouse,
+      address: customerAddress,
+      notes: customerNotes,
+    },
+    items,
+    subtotal,
+    deliveryFee,
+    discountAmount,
+    total: totalNum,
+    deliveryTiming: raw.deliveryTiming || 'today',
+    customTimingText: raw.customTimingText || '',
+    location: raw.location || undefined,
+    status,
+    createdAt,
+    statusUpdatedAt,
+    driverNotes: raw.driverNotes || '',
+  } as Order;
+}
+
+/**
  * Reads locally cached orders safely from LocalStorage across multiple keys
  */
 export function getLocalOrders(): Order[] {
@@ -33,8 +203,9 @@ export function getLocalOrders(): Order[] {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             parsed.forEach((o: any) => {
-              if (o && (o.id || o.trackingCode)) {
-                map.set(o.id || o.trackingCode, o);
+              if (o && (o.id || o.trackingCode || o.customerName || o.name || o.phone)) {
+                const normalized = normalizeOrder(o);
+                map.set(normalized.id || normalized.trackingCode, normalized);
               }
             });
           }
@@ -55,7 +226,8 @@ export function getLocalOrders(): Order[] {
  */
 export function saveLocalOrders(orders: Order[]): void {
   try {
-    const serialized = JSON.stringify(orders);
+    const safeArray = Array.isArray(orders) ? orders.map(normalizeOrder) : [];
+    const serialized = JSON.stringify(safeArray);
     ORDERS_KEYS.forEach((key) => {
       try {
         localStorage.setItem(key, serialized);
@@ -68,27 +240,33 @@ export function saveLocalOrders(orders: Order[]): void {
 
 /**
  * Saves a single order permanently across:
- * 1. LocalStorage (queen_orders & active_order)
+ * 1. LocalStorage (queen_orders, orders, cosmetic_local_orders, & active_order)
  * 2. Firestore Cloud Database (orders collection)
  * 3. Local Broadcast Channel & Window Events
  */
 export async function saveOrderPermanently(order: Order): Promise<Order> {
-  // 1. Immediately save to LocalStorage for zero-latency client persistence
+  const safeOrder = normalizeOrder(order);
+
+  // 1. Immediately save to LocalStorage across all unified keys for zero-latency client persistence
   try {
     const currentOrders = getLocalOrders();
-    const updatedOrders = [order, ...currentOrders.filter((o) => o.id !== order.id && o.trackingCode !== order.trackingCode)];
+    const updatedOrders = [
+      safeOrder,
+      ...currentOrders.filter((o) => o.id !== safeOrder.id && o.trackingCode !== safeOrder.trackingCode),
+    ];
     saveLocalOrders(updatedOrders);
 
-    localStorage.setItem(LOCAL_STORAGE_ACTIVE_ORDER_KEY, JSON.stringify(order));
-    localStorage.setItem(LOCAL_STORAGE_LAST_CODE_KEY, order.trackingCode);
+    localStorage.setItem(LOCAL_STORAGE_ACTIVE_ORDER_KEY, JSON.stringify(safeOrder));
+    localStorage.setItem(LOCAL_STORAGE_LAST_CODE_KEY, safeOrder.trackingCode);
   } catch (err) {
     console.warn('LocalStorage save error:', err);
   }
 
   // 2. Broadcast immediately to any open admin dashboards or tabs
   try {
-    broadcastNewOrderLocally(order as any);
-    window.dispatchEvent(new CustomEvent('queen_new_order', { detail: order }));
+    broadcastNewOrderLocally(safeOrder as any);
+    window.dispatchEvent(new CustomEvent('queen_new_order', { detail: safeOrder }));
+    window.dispatchEvent(new CustomEvent('queen_new_order_event', { detail: safeOrder }));
     window.dispatchEvent(new Event('queen_orders_updated'));
   } catch (err) {
     console.warn('Broadcast dispatch error:', err);
@@ -96,17 +274,17 @@ export async function saveOrderPermanently(order: Order): Promise<Order> {
 
   // 3. Save to Firebase Firestore cloud database
   try {
-    const docRef = doc(db, ORDERS_COLLECTION, order.id);
+    const docRef = doc(db, ORDERS_COLLECTION, safeOrder.id);
     await setDoc(docRef, {
-      ...order,
-      savedAt: new Date().toISOString()
+      ...safeOrder,
+      savedAt: new Date().toISOString(),
     }, { merge: true });
-    console.log(`[Firestore] Order ${order.trackingCode} saved to cloud database successfully.`);
+    console.log(`[Firestore] Order ${safeOrder.trackingCode} saved to cloud database successfully.`);
   } catch (firestoreErr) {
     console.warn('[Firestore] Could not save order to cloud (offline fallback active):', firestoreErr);
   }
 
-  return order;
+  return safeOrder;
 }
 
 /**
@@ -213,9 +391,9 @@ export async function fetchAllOrdersCombined(): Promise<Order[]> {
   try {
     const querySnapshot = await getDocs(collection(db, ORDERS_COLLECTION));
     querySnapshot.forEach((d) => {
-      const data = d.data() as Order;
-      if (data && data.trackingCode) {
-        const fullOrder = { ...data, id: d.id };
+      const data = d.data();
+      if (data) {
+        const fullOrder = normalizeOrder({ ...data, id: d.id || data.id });
         map.set(fullOrder.id || fullOrder.trackingCode, fullOrder);
       }
     });
@@ -231,8 +409,9 @@ export async function fetchAllOrdersCombined(): Promise<Order[]> {
       const data = await res.json().catch(() => null);
       if (data && Array.isArray(data.orders)) {
         data.orders.forEach((o: any) => {
-          if (o && (o.id || o.trackingCode)) {
-            map.set(o.id || o.trackingCode, o);
+          if (o) {
+            const fullOrder = normalizeOrder(o);
+            map.set(fullOrder.id || fullOrder.trackingCode, fullOrder);
           }
         });
       }
@@ -241,7 +420,7 @@ export async function fetchAllOrdersCombined(): Promise<Order[]> {
     // Silent
   }
 
-  const allMerged = Array.from(map.values());
+  const allMerged = Array.from(map.values()).map(normalizeOrder);
   allMerged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   saveLocalOrders(allMerged);
   return allMerged;
@@ -267,20 +446,21 @@ export function subscribeToOrdersRealtime(onUpdate: (orders: Order[]) => void): 
       // Keep existing local orders as base
       const currentLocals = getLocalOrders();
       currentLocals.forEach((o) => {
-        if (o && (o.id || o.trackingCode)) {
-          map.set(o.id || o.trackingCode, o);
+        if (o) {
+          const norm = normalizeOrder(o);
+          map.set(norm.id || norm.trackingCode, norm);
         }
       });
 
       snapshot.docs.forEach((d) => {
-        const data = d.data() as Order;
-        if (data && data.trackingCode) {
-          const fullOrder = { ...data, id: d.id };
+        const data = d.data();
+        if (data) {
+          const fullOrder = normalizeOrder({ ...data, id: d.id || data.id });
           map.set(fullOrder.id || fullOrder.trackingCode, fullOrder);
         }
       });
 
-      const mergedOrders = Array.from(map.values());
+      const mergedOrders = Array.from(map.values()).map(normalizeOrder);
       mergedOrders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       
       // Save latest truth to LocalStorage

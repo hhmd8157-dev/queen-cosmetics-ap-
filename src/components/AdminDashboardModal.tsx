@@ -51,7 +51,8 @@ import {
   deleteOrderEverywhere,
   subscribeToOrdersRealtime,
   getLocalOrders,
-  fetchAllOrdersCombined
+  fetchAllOrdersCombined,
+  normalizeOrder
 } from '../services/ordersFirestoreService';
 import { 
   deleteProductFromFirestore,
@@ -860,11 +861,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     // Real-time Firestore stream for instant cross-device order notifications
     const unsubscribeOrders = subscribeToOrdersRealtime((updatedOrders) => {
       if (Array.isArray(updatedOrders)) {
+        const normalizedList = updatedOrders.filter(Boolean).map(normalizeOrder);
         if (!isInitialFetchDoneRef.current) {
-          knownOrderIdsRef.current = new Set(updatedOrders.map((o) => o.id));
+          knownOrderIdsRef.current = new Set(normalizedList.map((o) => o.id));
           isInitialFetchDoneRef.current = true;
         } else {
-          const brandNewOrders = updatedOrders.filter((o) => !knownOrderIdsRef.current.has(o.id));
+          const brandNewOrders = normalizedList.filter((o) => !knownOrderIdsRef.current.has(o.id));
           if (brandNewOrders.length > 0) {
             brandNewOrders.forEach((newOrder) => {
               knownOrderIdsRef.current.add(newOrder.id);
@@ -872,7 +874,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             });
           }
         }
-        setOrders(updatedOrders);
+        setOrders(normalizedList);
       }
     });
     
@@ -885,12 +887,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const channel = getOrdersBroadcastChannel();
     const handleBroadcastMessage = (e: MessageEvent) => {
       if (e.data?.type === 'NEW_ORDER' && e.data?.order) {
-        const orderData = e.data.order;
+        const orderData = normalizeOrder(e.data.order);
         setOrders((prev) => {
-          if (prev.some((o) => o.id === orderData.id || o.trackingCode === orderData.trackingCode)) {
-            return prev.map((o) => (o.id === orderData.id || o.trackingCode === orderData.trackingCode ? orderData : o));
+          const safePrev = Array.isArray(prev) ? prev : [];
+          if (safePrev.some((o) => o && (o.id === orderData.id || o.trackingCode === orderData.trackingCode))) {
+            return safePrev.map((o) => (o && (o.id === orderData.id || o.trackingCode === orderData.trackingCode) ? orderData : o));
           }
-          return [orderData, ...prev];
+          return [orderData, ...safePrev];
         });
         if (!knownOrderIdsRef.current.has(orderData.id)) {
           knownOrderIdsRef.current.add(orderData.id);
@@ -898,16 +901,17 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         }
       } else if (e.data?.type === 'ORDER_DELETED' && e.data?.payload?.orderId) {
         const delId = e.data.payload.orderId;
-        setOrders((prev) => prev.filter((o) => o.id !== delId && o.trackingCode !== delId));
+        setOrders((prev) => (Array.isArray(prev) ? prev.filter((o) => o && o.id !== delId && o.trackingCode !== delId) : []));
       } else if (e.data?.type === 'NEW_CHAT_MESSAGE' && e.data?.payload) {
         const msg = e.data.payload;
         fetchChatThreads();
         if (selectedChatOrderId && (msg.orderId || msg.trackingCode || '').toUpperCase() === selectedChatOrderId.toUpperCase()) {
           setSelectedChatMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) {
-              return prev.map((m) => (m.id === msg.id ? msg : m));
+            const safePrev = Array.isArray(prev) ? prev : [];
+            if (safePrev.some((m) => m && m.id === msg.id)) {
+              return safePrev.map((m) => (m && m.id === msg.id ? msg : m));
             }
-            return [...prev, msg];
+            return [...safePrev, msg];
           });
         }
         if (soundEnabled && msg.sender === 'customer') {
@@ -926,13 +930,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     // Window custom event listener for same tab
     const handleSameTabOrder = (e: any) => {
-      const order = e.detail;
-      if (order) {
+      const rawOrder = e.detail;
+      if (rawOrder) {
+        const order = normalizeOrder(rawOrder);
         setOrders((prev) => {
-          if (prev.some((o) => o.id === order.id || o.trackingCode === order.trackingCode)) {
-            return prev.map((o) => (o.id === order.id || o.trackingCode === order.trackingCode ? order : o));
+          const safePrev = Array.isArray(prev) ? prev : [];
+          if (safePrev.some((o) => o && (o.id === order.id || o.trackingCode === order.trackingCode))) {
+            return safePrev.map((o) => (o && (o.id === order.id || o.trackingCode === order.trackingCode) ? order : o));
           }
-          return [order, ...prev];
+          return [order, ...safePrev];
         });
         if (!knownOrderIdsRef.current.has(order.id)) {
           knownOrderIdsRef.current.add(order.id);
@@ -947,7 +953,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const handleSameTabDeletion = (e: any) => {
       const { orderId } = e.detail;
       if (orderId) {
-        setOrders((prev) => prev.filter((o) => o.id !== orderId && o.trackingCode !== orderId));
+        setOrders((prev) => (Array.isArray(prev) ? prev.filter((o) => o && o.id !== orderId && o.trackingCode !== orderId) : []));
       }
     };
     window.addEventListener('queen_order_deleted', handleSameTabDeletion as any);
@@ -956,7 +962,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       if (!e.key || e.key.includes('order')) {
         const local = getLocalOrders();
         if (Array.isArray(local) && local.length > 0) {
-          setOrders(local);
+          setOrders(local.filter(Boolean).map(normalizeOrder));
         }
       }
     };
@@ -1438,31 +1444,63 @@ ${text}
     };
   }, [isAuthenticated, selectedChatOrderId]);
 
-  const fetchOrders = async (silent: boolean = false) => {
+  /**
+   * Unified Safe Data Fetching (دالة موحدة لجلب وعرض البيانات بأمان)
+   * Uses Array.isArray to strictly validate Orders, Products, and Messages before rendering,
+   * providing resilient Loading States instead of white screens or crashes.
+   */
+  const fetchAdminDataSafely = async (silent: boolean = false) => {
     if (!silent && orders.length === 0) setIsLoading(true);
     try {
-      const allOrders = await fetchAllOrdersCombined();
-      if (Array.isArray(allOrders)) {
-        setOrders(allOrders);
-        if (!isInitialFetchDoneRef.current) {
-          knownOrderIdsRef.current = new Set(allOrders.filter(Boolean).map((o) => o.id));
-          isInitialFetchDoneRef.current = true;
+      // 1. Safe Orders Fetching & Array Validation
+      try {
+        const allOrders = await fetchAllOrdersCombined();
+        if (Array.isArray(allOrders)) {
+          const validOrders = allOrders.filter(Boolean).map(normalizeOrder);
+          setOrders(validOrders);
+          if (!isInitialFetchDoneRef.current) {
+            knownOrderIdsRef.current = new Set(validOrders.map((o) => o.id));
+            isInitialFetchDoneRef.current = true;
+          }
+        } else {
+          const local = getLocalOrders();
+          if (Array.isArray(local)) {
+            setOrders(local.filter(Boolean).map(normalizeOrder));
+          }
         }
-      } else {
+      } catch (orderErr) {
+        console.warn('Safe orders fetch notice:', orderErr);
         const local = getLocalOrders();
-        if (Array.isArray(local)) {
-          setOrders(local);
+        if (Array.isArray(local) && local.length > 0) {
+          setOrders(local.filter(Boolean).map(normalizeOrder));
         }
       }
-    } catch (e) {
-      console.warn('Error fetching admin orders:', e);
-      const local = getLocalOrders();
-      if (Array.isArray(local) && local.length > 0) {
-        setOrders(local);
+
+      // 2. Safe Products Fetching & Array Validation
+      try {
+        const storedProducts = getStoredProducts();
+        if (Array.isArray(storedProducts) && storedProducts.length > 0) {
+          setAdminProducts(storedProducts);
+        }
+      } catch (prodErr) {
+        console.warn('Safe products fetch notice:', prodErr);
       }
+
+      // 3. Safe Messages / Chat Threads Fetching & Array Validation
+      try {
+        await fetchChatThreads();
+      } catch (chatErr) {
+        console.warn('Safe chat threads fetch notice:', chatErr);
+      }
+    } catch (globalErr) {
+      console.warn('Safe admin data fetching notice:', globalErr);
     } finally {
       if (!silent) setIsLoading(false);
     }
+  };
+
+  const fetchOrders = async (silent: boolean = false) => {
+    await fetchAdminDataSafely(silent);
   };
 
   // PIN Submit Handler with automatic sound activation & notification authorization
@@ -1658,9 +1696,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
   const filteredOrders = safeOrders.filter((o) => {
     if (!o) return false;
     // Exclude delivered/cancelled from 'all' tab as requested to keep dashboard clean
+    const oStatus = ((o.status as any) === 'جديد' ? 'received' : o.status) || 'received';
     const matchesFilter = activeFilter === 'all' 
-      ? (o.status !== 'delivered' && o.status !== 'cancelled')
-      : o.status === activeFilter;
+      ? (oStatus !== 'delivered' && oStatus !== 'cancelled')
+      : (oStatus === activeFilter || (o.status as any) === activeFilter);
 
     const query = searchQuery.trim().toLowerCase();
     if (!query) return matchesFilter;
@@ -1706,7 +1745,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
   const stats = {
     total: safeOrders.filter(o => o && o.status !== 'delivered' && o.status !== 'cancelled').length,
-    received: safeOrders.filter((o) => o && o.status === 'received').length,
+    received: safeOrders.filter((o) => o && (o.status === 'received' || (o.status as any) === 'جديد')).length,
     preparing: safeOrders.filter((o) => o && o.status === 'preparing').length,
     outForDelivery: safeOrders.filter((o) => o && o.status === 'out_for_delivery').length,
     delivered: safeOrders.filter((o) => o && o.status === 'delivered').length,
@@ -1719,32 +1758,32 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
   return (
     <>
-      <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 animate-fade-in w-full">
+      <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden bg-black/85 backdrop-blur-sm flex items-center justify-center p-0 sm:p-3 md:p-4 animate-fade-in w-full max-w-full">
       <div
-        className="w-full h-full sm:h-auto sm:max-w-5xl bg-[#121214] text-white sm:rounded-2xl shadow-2xl border-0 sm:border border-[#2E2E33] overflow-hidden flex flex-col sm:max-h-[94vh]"
+        className="w-full max-w-full sm:max-w-5xl h-full sm:h-auto bg-[#121214] text-white sm:rounded-2xl shadow-2xl border-0 sm:border border-[#2E2E33] overflow-hidden flex flex-col sm:max-h-[94vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header - Ultra-Modern Glassmorphic VIP Design */}
-        <div className="p-4 sm:px-6 bg-gradient-to-r from-[#18181B] via-[#1F1B15] to-[#18181B] border-b border-[#D4AF37]/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xl backdrop-blur-xl relative overflow-hidden">
+        <div className="p-3 sm:p-4 sm:px-6 bg-gradient-to-r from-[#18181B] via-[#1F1B15] to-[#18181B] border-b border-[#D4AF37]/30 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shadow-2xl backdrop-blur-xl relative overflow-hidden">
           <div className="absolute -left-10 -top-10 w-40 h-40 bg-[#D4AF37]/10 rounded-full blur-3xl pointer-events-none"></div>
           <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-purple-600/10 rounded-full blur-3xl pointer-events-none"></div>
 
-          <div className="flex items-center gap-3.5 relative z-10">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#D4AF37]/30 to-[#C5A059]/10 border-2 border-[#D4AF37]/60 flex items-center justify-center text-[#FFE58F] shadow-lg animate-pulse shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3.5 relative z-10 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-[#D4AF37]/30 to-[#C5A059]/10 border-2 border-[#D4AF37]/60 flex items-center justify-center text-[#FFE58F] text-lg sm:text-xl shadow-lg animate-pulse shrink-0">
               👑
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-black text-base sm:text-lg bg-gradient-to-r from-[#FFE58F] via-white to-[#D4AF37] bg-clip-text text-transparent">
-                  أهلاً بك أستاذ علاء | العقل المدبر للمتجر 👑
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h2 className="font-black text-xs sm:text-base md:text-lg bg-gradient-to-r from-[#FFE58F] via-white to-[#D4AF37] bg-clip-text text-transparent truncate">
+                  أهلاً بك أستاذ علاء | لوحة التحكم 👑
                 </h2>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-[11px] bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 shadow-xs mr-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>النظام متصل ومحدث تلقائياً 🟢</span>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] sm:text-[11px] bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 shadow-xs shrink-0">
+                  <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>متصل ومباشر 🟢</span>
                 </div>
               </div>
-              <div className="flex items-center gap-3 mt-0.5 text-xs text-[#A1A1AA]">
-                <span className="font-mono text-amber-300 font-bold bg-black/40 px-2 py-0.5 rounded border border-[#D4AF37]/30">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-0.5 text-[10px] sm:text-xs text-[#A1A1AA]">
+                <span className="font-mono text-amber-300 font-bold bg-black/40 px-1.5 sm:px-2 py-0.5 rounded border border-[#D4AF37]/30">
                   ⏰ {currentTime}
                 </span>
                 <button
@@ -1755,24 +1794,24 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       : 'bg-rose-950 text-rose-300 border border-rose-500/50'
                   }`}
                 >
-                  <span className={`w-2 h-2 rounded-full ${isLiveSystemActive ? 'bg-emerald-400 animate-ping' : 'bg-rose-400'}`}></span>
+                  <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${isLiveSystemActive ? 'bg-emerald-400 animate-ping' : 'bg-rose-400'}`}></span>
                   <span>{isLiveSystemActive ? 'النظام مباشر 🟢' : 'متوقف مؤقتاً ⏸️'}</span>
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 relative z-10 w-full sm:w-auto justify-end">
+          <div className="flex items-center gap-1.5 sm:gap-2 relative z-10 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 border-[#2E2E33]/60 pt-2 sm:pt-0">
             {isAuthenticated && (
-              <div className="contents">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 {/* Send Orders Dispatch Sheet to Delivery Driver */}
                 <button
                   onClick={handleCopyDailyDispatchSheet}
-                  className="bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-110 text-black font-extrabold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                  className="bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-110 text-black font-extrabold p-2 sm:px-3.5 sm:py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
                   title="نسخ كشف الطلبات النشطة للمندوب"
                 >
-                  <Bike className="w-4 h-4 text-black" />
-                  <span className="hidden md:inline">كشف المندوب 📋</span>
+                  <Bike className="w-4 h-4 text-black shrink-0" />
+                  <span className="hidden xs:inline sm:hidden md:inline">كشف المندوب 📋</span>
                 </button>
 
                 {/* Sound Quick Toggle */}
@@ -1785,8 +1824,8 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   }`}
                   title={soundEnabled ? 'صوت التنبيه العالي مفعّل' : 'صوت التنبيه مكتوم'}
                 >
-                  {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4" />}
-                  <span className="hidden sm:inline">{soundEnabled ? 'الصوت مفعّل' : 'مكتوم'}</span>
+                  {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <VolumeX className="w-4 h-4 shrink-0" />}
+                  <span className="hidden sm:inline">{soundEnabled ? 'مفعّل' : 'مكتوم'}</span>
                 </button>
 
                 {/* Test Chime Quick Button */}
@@ -1795,7 +1834,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   className="p-2 bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] hover:text-white rounded-xl border border-[#D4AF37]/40 transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
                   title="تجربة صوت الرنة وإشعار المتصفح"
                 >
-                  <BellRing className="w-4 h-4 text-[#D4AF37]" />
+                  <BellRing className="w-4 h-4 text-[#D4AF37] shrink-0" />
                   <span className="hidden lg:inline">تجربة الرنة 🔔</span>
                 </button>
 
@@ -1822,7 +1861,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
             <button
               onClick={onClose}
-              className="p-2 text-[#A1A1AA] hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+              className="p-2 text-[#A1A1AA] hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer mr-auto sm:mr-0"
               title="إغلاق"
             >
               <X className="w-5 h-5" />
@@ -1907,81 +1946,81 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             </form>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-5">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-2.5 sm:p-4 md:p-6 space-y-3.5 sm:space-y-5 w-full max-w-full">
             {/* Live Father Device Alert Status Bar */}
-            <div className="bg-gradient-to-r from-[#1E1710] via-[#2A1E14] to-[#1E1710] p-4 rounded-2xl border-2 border-[#D4AF37]/50 shadow-xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 relative overflow-hidden">
-              <div className="flex items-center gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/60 flex items-center justify-center text-[#FFE58F] shrink-0 text-xl shadow-inner animate-pulse">
+            <div className="bg-gradient-to-r from-[#1E1710] via-[#2A1E14] to-[#1E1710] p-3 sm:p-4 rounded-xl sm:rounded-2xl border-2 border-[#D4AF37]/50 shadow-xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4 relative overflow-hidden">
+              <div className="flex items-center gap-3 sm:gap-3.5">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/60 flex items-center justify-center text-[#FFE58F] shrink-0 text-lg sm:text-xl shadow-inner animate-pulse">
                   🔔
                 </div>
-                <div className="space-y-0.5 text-right">
+                <div className="space-y-0.5 text-right min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    <h3 className="font-extrabold text-sm sm:text-base text-[#FFE58F]">
+                    <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0"></span>
+                    <h3 className="font-extrabold text-xs sm:text-base text-[#FFE58F] truncate">
                       نظام التنبيهات الفورية لجهاز الوالد شغال 🟢
                     </h3>
                   </div>
-                  <p className="text-xs text-[#D4D4D8]">
+                  <p className="text-[11px] sm:text-xs text-[#D4D4D8]">
                     ستنطلق رنة عالية مميزة وإشعار فوري على هاتفك لحظة وصول أي طلب من أي زبون
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col xs:flex-row sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
                 {/* Browser Notification Status / Grant Button */}
                 {notifPermission !== 'granted' ? (
                   <button
                     onClick={handleRequestNotifications}
-                    className="bg-amber-500 hover:bg-amber-400 text-black font-extrabold px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer animate-bounce border border-amber-300"
+                    className="bg-amber-500 hover:bg-amber-400 text-black font-extrabold px-3 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer animate-bounce border border-amber-300 w-full sm:w-auto"
                   >
-                    <Bell className="w-4 h-4" />
+                    <Bell className="w-4 h-4 shrink-0" />
                     <span>تفعيل إشعارات الطلبات والرسائل 🔔</span>
                   </button>
                 ) : (
-                  <div className="bg-emerald-950/70 border border-emerald-600/60 text-emerald-300 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>إشعارات الطلبات والرسائل مفعّلة ✅</span>
+                  <div className="bg-emerald-950/70 border border-emerald-600/60 text-emerald-300 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 w-full sm:w-auto">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>إشعارات الطلبات مفعّلة ✅</span>
                   </div>
                 )}
 
                 {/* Test Sound & Notification Trigger */}
                 <button
                   onClick={handleTestChimeAndNotification}
-                  className="bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                  className="bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-3.5 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer w-full sm:w-auto"
                 >
-                  <Play className="w-3.5 h-3.5 fill-black" />
+                  <Play className="w-3.5 h-3.5 fill-black shrink-0" />
                   <span>تجربة الرنة والإشعار 🔊</span>
                 </button>
               </div>
             </div>
 
             {testAlertSuccess && (
-              <div className="bg-emerald-950/90 border border-emerald-500 text-emerald-300 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in shadow-md">
-                <Check className="w-4 h-4 text-emerald-400 stroke-[3]" />
+              <div className="bg-emerald-950/90 border border-emerald-500 text-emerald-300 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in shadow-md">
+                <Check className="w-4 h-4 text-emerald-400 stroke-[3] shrink-0" />
                 <span>{testAlertSuccess}</span>
               </div>
             )}
 
             {/* Pulsating New Incoming Order Banner if active */}
             {newOrderAlertBanner && (
-              <div className="bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 border-2 border-amber-400 text-white p-4 sm:p-5 rounded-2xl shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-bounce">
-                <div className="flex items-center gap-3.5 text-right">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-400 text-black flex items-center justify-center text-2xl font-black shrink-0 shadow-lg">
+              <div className="bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 border-2 border-amber-400 text-white p-3.5 sm:p-5 rounded-2xl shadow-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4 animate-bounce">
+                <div className="flex items-center gap-3 sm:gap-3.5 text-right min-w-0">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-amber-400 text-black flex items-center justify-center text-xl sm:text-2xl font-black shrink-0 shadow-lg">
                     👑
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="bg-amber-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
                         طلب جديد الآن!
                       </span>
-                      <span className="font-mono font-bold text-amber-300 text-sm">
+                      <span className="font-mono font-bold text-amber-300 text-xs sm:text-sm">
                         #{newOrderAlertBanner?.trackingCode || '0000'}
                       </span>
                     </div>
-                    <h4 className="font-bold text-base text-white mt-1">
+                    <h4 className="font-bold text-xs sm:text-base text-white mt-1 truncate">
                       الزبون: {newOrderAlertBanner?.customer?.name || 'زبون'} ({newOrderAlertBanner?.customer?.governorate || 'العراق'}) — {formatIQD(newOrderAlertBanner?.total || 0)}
                     </h4>
-                    <p className="text-xs text-amber-200/80">
+                    <p className="text-[11px] sm:text-xs text-amber-200/80 truncate">
                       العنوان: {newOrderAlertBanner?.customer?.address || ''}
                     </p>
                   </div>
@@ -1993,7 +2032,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       handleCopyDispatchText(newOrderAlertBanner);
                       setNewOrderAlertBanner(null);
                     }}
-                    className="flex-1 md:flex-initial bg-amber-400 hover:bg-amber-300 text-black font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                    className="flex-1 md:flex-initial bg-amber-400 hover:bg-amber-300 text-black font-extrabold px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     <span>نسخ للمندوب</span>
@@ -2004,7 +2043,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       handleStatusChange(newOrderAlertBanner.id, 'preparing');
                       setNewOrderAlertBanner(null);
                     }}
-                    className="flex-1 md:flex-initial bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                    className="flex-1 md:flex-initial bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                   >
                     <Package className="w-3.5 h-3.5" />
                     <span>بدء التجهيز</span>
@@ -2012,7 +2051,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                   <button
                     onClick={() => setNewOrderAlertBanner(null)}
-                    className="p-2 text-stone-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors"
+                    className="p-2 text-stone-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors shrink-0"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -2022,27 +2061,27 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
             {/* Instant Floating Toast Notification for New Customer Chat Message */}
             {chatToastAlert && (
-              <div className="bg-gradient-to-r from-[#1A1813] via-[#242018] to-[#1A1813] border-2 border-[#D4AF37] text-white p-4 rounded-2xl shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-bounce shrink-0">
-                <div className="flex items-start gap-3 text-right flex-1 w-full">
-                  <div className="w-10 h-10 rounded-2xl bg-[#D4AF37] text-black flex items-center justify-center text-xl font-black shrink-0 shadow-lg">
+              <div className="bg-gradient-to-r from-[#1A1813] via-[#242018] to-[#1A1813] border-2 border-[#D4AF37] text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4 animate-bounce shrink-0">
+                <div className="flex items-start gap-3 text-right flex-1 w-full min-w-0">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-[#D4AF37] text-black flex items-center justify-center text-lg sm:text-xl font-black shrink-0 shadow-lg">
                     💬
                   </div>
-                  <div className="space-y-1 flex-1">
+                  <div className="space-y-1 flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
-                          رسالة جديدة من زبون
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="bg-emerald-500 text-black text-[9px] sm:text-[10px] font-black px-2 py-0.5 rounded-full uppercase shrink-0">
+                          رسالة جديدة
                         </span>
-                        <span className="font-bold text-sm text-white flex items-center gap-1">
-                          <User className="w-3.5 h-3.5 text-[#D4AF37]" />
-                          {chatToastAlert.customerName}
+                        <span className="font-bold text-xs sm:text-sm text-white flex items-center gap-1 truncate">
+                          <User className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
+                          <span className="truncate">{chatToastAlert.customerName}</span>
                         </span>
                       </div>
-                      <span className="font-mono font-bold text-xs text-[#FFE58F] bg-black/50 px-2.5 py-0.5 rounded-md border border-[#D4AF37]/40">
+                      <span className="font-mono font-bold text-[11px] sm:text-xs text-[#FFE58F] bg-black/50 px-2 py-0.5 rounded-md border border-[#D4AF37]/40 shrink-0">
                         #{chatToastAlert.orderId}
                       </span>
                     </div>
-                    <p className="text-xs text-stone-200 bg-black/40 p-2.5 rounded-xl border border-[#2E2E33] leading-relaxed line-clamp-2">
+                    <p className="text-[11px] sm:text-xs text-stone-200 bg-black/40 p-2 sm:p-2.5 rounded-xl border border-[#2E2E33] leading-relaxed line-clamp-2">
                       "{chatToastAlert.text}"
                     </p>
                   </div>
@@ -2051,7 +2090,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
                   <button
                     onClick={() => handleOpenChatFromToast(chatToastAlert.orderId)}
-                    className="flex-1 md:flex-initial bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all"
+                    className="flex-1 md:flex-initial bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all"
                   >
                     <MessageSquare className="w-4 h-4" />
                     <span>فتح المحادثة فوراً ⚡</span>
@@ -2059,7 +2098,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                   <button
                     onClick={() => setChatToastAlert(null)}
-                    className="p-2.5 text-stone-400 hover:text-white rounded-xl bg-[#27272A] hover:bg-[#3F3F46] transition-colors cursor-pointer text-xs font-bold"
+                    className="p-2 text-stone-400 hover:text-white rounded-xl bg-[#27272A] hover:bg-[#3F3F46] transition-colors cursor-pointer text-xs font-bold"
                     title="تجاهل"
                   >
                     <X className="w-4 h-4" />
@@ -2069,73 +2108,73 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             )}
 
             {/* Quick Stats Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
-              <div className="bg-[#18181B] p-3 rounded-xl border border-[#2E2E33] space-y-1">
-                <span className="text-[11px] text-[#A1A1AA]">إجمالي الطلبات</span>
-                <p className="text-lg font-bold text-white">{stats.total}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-2.5">
+              <div className="bg-[#18181B] p-2.5 sm:p-3 rounded-xl border border-[#2E2E33] space-y-0.5">
+                <span className="text-[10px] sm:text-[11px] text-[#A1A1AA]">إجمالي الطلبات</span>
+                <p className="text-base sm:text-lg font-bold text-white">{stats.total}</p>
               </div>
 
-              <div className="bg-[#18181B] p-3 rounded-xl border border-amber-500/30 space-y-1">
-                <span className="text-[11px] text-amber-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span>جديدة / بالانتظار</span>
+              <div className="bg-[#18181B] p-2.5 sm:p-3 rounded-xl border border-amber-500/30 space-y-0.5">
+                <span className="text-[10px] sm:text-[11px] text-amber-400 flex items-center gap-1 truncate">
+                  <Clock className="w-3 h-3 shrink-0" />
+                  <span className="truncate">جديدة / بالانتظار</span>
                 </span>
-                <p className="text-lg font-bold text-amber-300">{stats.received}</p>
+                <p className="text-base sm:text-lg font-bold text-amber-300">{stats.received}</p>
               </div>
 
-              <div className="bg-[#18181B] p-3 rounded-xl border border-blue-500/30 space-y-1">
-                <span className="text-[11px] text-blue-400 flex items-center gap-1">
-                  <Package className="w-3 h-3" />
-                  <span>جاري التجهيز</span>
+              <div className="bg-[#18181B] p-2.5 sm:p-3 rounded-xl border border-blue-500/30 space-y-0.5">
+                <span className="text-[10px] sm:text-[11px] text-blue-400 flex items-center gap-1 truncate">
+                  <Package className="w-3 h-3 shrink-0" />
+                  <span className="truncate">جاري التجهيز</span>
                 </span>
-                <p className="text-lg font-bold text-blue-300">{stats.preparing}</p>
+                <p className="text-base sm:text-lg font-bold text-blue-300">{stats.preparing}</p>
               </div>
 
-              <div className="bg-[#18181B] p-3 rounded-xl border border-purple-500/30 space-y-1">
-                <span className="text-[11px] text-purple-400 flex items-center gap-1">
-                  <Bike className="w-3 h-3" />
-                  <span>مع المندوب</span>
+              <div className="bg-[#18181B] p-2.5 sm:p-3 rounded-xl border border-purple-500/30 space-y-0.5">
+                <span className="text-[10px] sm:text-[11px] text-purple-400 flex items-center gap-1 truncate">
+                  <Bike className="w-3 h-3 shrink-0" />
+                  <span className="truncate">مع المندوب</span>
                 </span>
-                <p className="text-lg font-bold text-purple-300">{stats.outForDelivery}</p>
+                <p className="text-base sm:text-lg font-bold text-purple-300">{stats.outForDelivery}</p>
               </div>
 
-              <div className="col-span-2 sm:col-span-1 bg-[#18181B] p-3 rounded-xl border border-emerald-500/30 space-y-1">
-                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>تم التوصيل</span>
+              <div className="col-span-2 sm:col-span-1 bg-[#18181B] p-2.5 sm:p-3 rounded-xl border border-emerald-500/30 space-y-0.5">
+                <span className="text-[10px] sm:text-[11px] text-emerald-400 flex items-center gap-1 truncate">
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span className="truncate">تم التوصيل</span>
                 </span>
-                <p className="text-lg font-bold text-emerald-300">{stats.delivered}</p>
+                <p className="text-base sm:text-lg font-bold text-emerald-300">{stats.delivered}</p>
               </div>
             </div>
 
             {/* Daily Report & Profit Calculator Widget */}
-            <div className="bg-gradient-to-br from-[#18181B] to-[#121214] p-4 rounded-2xl border border-[#D4AF37]/30 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300">
+            <div className="bg-gradient-to-br from-[#18181B] to-[#121214] p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-[#D4AF37]/30 shadow-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 text-base sm:text-lg shrink-0">
                   📈
                 </div>
-                <div>
-                  <h4 className="font-bold text-sm text-[#FFE58F]">تقرير المبيعات والأرباح اليومية</h4>
-                  <p className="text-xs text-[#A1A1AA]">
-                    إجمالي المبيعات المؤكدة (تم التوصيل): <strong className="text-emerald-400 font-mono">{formatIQD(stats.revenue)}</strong>
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-xs sm:text-sm text-[#FFE58F] truncate">تقرير المبيعات والأرباح اليومية</h4>
+                  <p className="text-[11px] sm:text-xs text-[#A1A1AA] truncate">
+                    المبيعات المؤكدة: <strong className="text-emerald-400 font-mono">{formatIQD(stats.revenue)}</strong>
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              <div className="flex items-center justify-between sm:justify-end gap-2.5 sm:gap-3 w-full sm:w-auto border-t sm:border-t-0 border-[#2E2E33]/60 pt-2 sm:pt-0">
                 <div className="text-right">
-                  <span className="text-[11px] text-[#A1A1AA] block">صافي الربح التقديري ({profitMarginPercent}%)</span>
-                  <strong className="text-sm font-mono text-[#D4AF37]">
+                  <span className="text-[10px] sm:text-[11px] text-[#A1A1AA] block">صافي الربح ({profitMarginPercent}%)</span>
+                  <strong className="text-xs sm:text-sm font-mono text-[#D4AF37]">
                     {formatIQD(Math.round(stats.revenue * (profitMarginPercent / 100)))}
                   </strong>
                 </div>
 
-                <div className="flex items-center gap-1 bg-[#27272A] px-2.5 py-1.5 rounded-xl border border-[#3F3F46]">
-                  <span className="text-[10px] text-[#A1A1AA]">نسبة الربح:</span>
+                <div className="flex items-center gap-1 bg-[#27272A] px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl border border-[#3F3F46]">
+                  <span className="text-[10px] text-[#A1A1AA]">النسبة:</span>
                   <select
                     value={profitMarginPercent}
                     onChange={(e) => setProfitMarginPercent(Number(e.target.value))}
-                    className="bg-black text-amber-300 text-xs font-bold px-2 py-1 rounded-lg border border-[#D4AF37]/40 outline-hidden"
+                    className="bg-black text-amber-300 text-xs font-bold px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg border border-[#D4AF37]/40 outline-hidden cursor-pointer"
                   >
                     <option value={25}>25%</option>
                     <option value={30}>30%</option>
@@ -2148,20 +2187,20 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             </div>
 
             {/* Main Admin Switcher Tabs: Orders vs Telegram vs Products vs Alert Settings */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap items-center gap-2 bg-[#18181B] p-1.5 rounded-xl border border-[#2E2E33]">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 items-center gap-1.5 sm:gap-2 bg-[#18181B] p-1.5 rounded-xl border border-[#2E2E33] w-full">
               <button
                 onClick={() => setAdminMainTab('orders')}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center ${
                   adminMainTab === 'orders'
-                    ? 'bg-[#D4AF37] text-black shadow-sm'
+                    ? 'bg-[#D4AF37] text-black shadow-sm font-black'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Package className="w-4 h-4" />
-                <span>إدارة الطلبات ({stats.total})</span>
+                <Package className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">الطلبات ({stats.total})</span>
                 {stats.received > 0 && (
-                  <span className="bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full border border-black animate-pulse">
-                    {stats.received} جديد 🔔
+                  <span className="bg-rose-500 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full border border-black animate-pulse shrink-0">
+                    {stats.received} 🔔
                   </span>
                 )}
               </button>
@@ -2171,16 +2210,16 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   setAdminMainTab('chats');
                   fetchChatThreads();
                 }}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center relative ${
                   adminMainTab === 'chats'
                     ? 'bg-emerald-500 text-black font-extrabold shadow-sm'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <MessageSquare className="w-4 h-4" />
-                <span>محادثات الزبائن 💬</span>
+                <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">المحادثات 💬</span>
                 {totalUnreadChatsCount > 0 && (
-                  <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full border border-black animate-pulse">
+                  <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full border border-black animate-pulse shrink-0">
                     {totalUnreadChatsCount}
                   </span>
                 )}
@@ -2191,16 +2230,16 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   setAdminMainTab('telegram');
                   fetchTelegramStatus();
                 }}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center ${
                   adminMainTab === 'telegram'
-                    ? 'bg-[#229ED9] text-white shadow-sm'
+                    ? 'bg-[#229ED9] text-white shadow-sm font-black'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Bot className="w-4 h-4" />
-                <span>بوت التلجرام 🤖</span>
+                <Bot className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">التلجرام 🤖</span>
                 {telegramStatus?.config?.chatIds?.length > 0 && (
-                  <span className="bg-emerald-500 text-black text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                  <span className="bg-emerald-500 text-black text-[9px] px-1.5 py-0.2 rounded-full font-bold shrink-0">
                     {telegramStatus.config.chatIds.length}
                   </span>
                 )}
@@ -2208,38 +2247,38 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
               <button
                 onClick={() => setAdminMainTab('products')}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center ${
                   adminMainTab === 'products'
-                    ? 'bg-[#D4AF37] text-black shadow-sm'
+                    ? 'bg-[#D4AF37] text-black shadow-sm font-black'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Sparkles className="w-4 h-4" />
-                <span>إدارة المنتجات ({adminProducts.length})</span>
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">المنتجات ({adminProducts.length})</span>
               </button>
 
               <button
                 onClick={() => setAdminMainTab('categories')}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center ${
                   adminMainTab === 'categories'
-                    ? 'bg-[#D4AF37] text-black shadow-sm'
+                    ? 'bg-[#D4AF37] text-black shadow-sm font-black'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Tag className="w-4 h-4" />
-                <span>إدارة الأقسام ({adminCategories.length})</span>
+                <Tag className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">الأقسام ({adminCategories.length})</span>
               </button>
 
               <button
                 onClick={() => setAdminMainTab('alerts_settings')}
-                className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                className={`w-full py-2 sm:py-2.5 px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 text-center ${
                   adminMainTab === 'alerts_settings'
-                    ? 'bg-[#D4AF37] text-black shadow-sm'
+                    ? 'bg-[#D4AF37] text-black shadow-sm font-black'
                     : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
                 }`}
               >
-                <BellRing className="w-4 h-4" />
-                <span>إعدادات التنبيه 🔔</span>
+                <BellRing className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">إعداد التنبيه 🔔</span>
               </button>
             </div>
 
@@ -3366,19 +3405,19 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             ) : (
               <>
             {/* Filter Tabs & Search Controls */}
-            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 items-stretch sm:items-center justify-between w-full">
               {/* Filter Tabs */}
-              <div className="flex flex-wrap gap-1.5 bg-[#18181B] p-1 rounded-xl border border-[#2E2E33]">
+              <div className="grid grid-cols-2 xs:grid-cols-4 sm:flex sm:flex-wrap gap-1 bg-[#18181B] p-1 rounded-xl border border-[#2E2E33] w-full sm:w-auto">
                 {[
                   { id: 'all', label: `النشطة (${stats.total})` },
                   { id: 'received', label: `جديدة (${stats.received})` },
                   { id: 'preparing', label: `تجهيز (${stats.preparing})` },
-                  { id: 'out_for_delivery', label: `مع المندوب (${stats.outForDelivery})` },
+                  { id: 'out_for_delivery', label: `مندوب (${stats.outForDelivery})` },
                 ].map((tab) => (
                   <button
                     key={tab.id}
                     onClick={() => setActiveFilter(tab.id as any)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer text-center truncate ${
                       activeFilter === tab.id
                         ? 'bg-[#D4AF37] text-black font-bold'
                         : 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
@@ -3390,7 +3429,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
               </div>
 
               {/* Search Bar */}
-              <div className="relative flex-1 max-w-xs">
+              <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-xs">
                 <input
                   type="text"
                   value={searchQuery}
@@ -3439,20 +3478,20 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       }`}
                     >
                       {/* Order Card Header */}
-                      <div className="p-4 sm:px-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#2E2E33]">
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono font-bold text-base text-[#FFE58F] bg-black/40 px-3 py-1 rounded-lg border border-[#D4AF37]/30">
+                      <div className="p-3 sm:p-4 sm:px-5 flex flex-wrap items-center justify-between gap-2 sm:gap-3 border-b border-[#2E2E33]">
+                        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                          <span className="font-mono font-bold text-xs sm:text-base text-[#FFE58F] bg-black/40 px-2 sm:px-3 py-1 rounded-lg border border-[#D4AF37]/30 shrink-0">
                             #{order?.trackingCode || '0000'}
                           </span>
 
-                          <div>
-                            <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                              <span>{order?.customer?.name || 'زبون'}</span>
-                              <span className="text-[11px] text-[#A1A1AA] font-normal">
+                          <div className="min-w-0 flex-1">
+                            <h3 className="font-bold text-xs sm:text-sm text-white flex items-center gap-1.5 truncate">
+                              <span className="truncate">{order?.customer?.name || 'زبون'}</span>
+                              <span className="text-[10px] sm:text-[11px] text-[#A1A1AA] font-normal shrink-0">
                                 ({order?.customer?.governorate || 'العراق'})
                               </span>
                             </h3>
-                            <p className="text-[11px] text-[#71717A]">
+                            <p className="text-[10px] sm:text-[11px] text-[#71717A]">
                               {new Date(order?.createdAt || Date.now()).toLocaleTimeString('ar-IQ', {
                                 hour: '2-digit',
                                 minute: '2-digit',
@@ -3466,7 +3505,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         {/* Status Pills */}
                         <div className="flex items-center gap-2">
                           <span
-                            className={`text-xs font-bold px-3 py-1 rounded-full border ${
+                            className={`text-[11px] sm:text-xs font-bold px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full border ${
                               order.status === 'received'
                                 ? 'bg-amber-950/60 text-amber-300 border-amber-600/50 animate-pulse'
                                 : order.status === 'preparing'
@@ -3485,22 +3524,22 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                             {order.status === 'cancelled' && '❌ ملغي'}
                           </span>
 
-                          <span className="font-bold text-[#D4AF37] text-sm sm:text-base">
+                          <span className="font-bold text-[#D4AF37] text-xs sm:text-base font-mono">
                             {formatIQD(order?.total || 0)}
                           </span>
                         </div>
                       </div>
 
                       {/* Order Details Body */}
-                      <div className="p-4 sm:px-5 space-y-4">
+                      <div className="p-3 sm:p-4 sm:px-5 space-y-3.5 sm:space-y-4">
                         {/* Quick Contact & Map Actions for Driver / Father */}
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
                           {/* Direct Call */}
                           <a
                             href={`tel:${order?.customer?.phone || ''}`}
-                            className="inline-flex items-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-white px-3 py-2 rounded-xl text-xs font-semibold border border-[#3F3F46] transition-colors"
+                            className="inline-flex items-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-semibold border border-[#3F3F46] transition-colors"
                           >
-                            <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                            <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                             <span>اتصال ({order?.customer?.phone || 'بدون رقم'})</span>
                           </a>
 
@@ -3509,26 +3548,26 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                             href={`https://wa.me/964${(order?.customer?.phone || '').replace(/^0+/, '')}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 px-3 py-2 rounded-xl text-xs font-semibold border border-emerald-700/50 transition-colors"
+                            className="inline-flex items-center gap-1.5 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-semibold border border-emerald-700/50 transition-colors"
                           >
-                            <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>مراسلة واتساب</span>
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <span>واتساب</span>
                           </a>
 
                           {/* Live Chat Direct Button */}
                           <button
                             onClick={() => handleOpenChatFromToast(order?.trackingCode || '')}
-                            className="inline-flex items-center gap-1.5 bg-[#D4AF37] hover:bg-[#FFE58F] text-black px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
+                            className="inline-flex items-center gap-1.5 bg-[#D4AF37] hover:bg-[#FFE58F] text-black px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
                             title="فتح الشات المباشر مع هذا الزبون"
                           >
-                            <MessageSquare className="w-3.5 h-3.5 fill-black" />
+                            <MessageSquare className="w-3.5 h-3.5 fill-black shrink-0" />
                             <span>شات الزبون 💬</span>
                           </button>
 
                           {/* Quick WhatsApp Reply: Preparing */}
                           <button
                             onClick={() => handleSendQuickWhatsAppReply(order, 'preparing')}
-                            className="inline-flex items-center gap-1 bg-emerald-900/40 hover:bg-emerald-900 text-emerald-300 px-2.5 py-2 rounded-xl text-[11px] font-medium border border-emerald-600/40 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 bg-emerald-900/40 hover:bg-emerald-900 text-emerald-300 px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl text-[11px] font-medium border border-emerald-600/40 transition-colors cursor-pointer"
                             title="إرسال رسالة جاهزة للزبون: طلبك قيد التجهيز"
                           >
                             <span>💬 قيد التجهيز</span>
@@ -3537,7 +3576,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                           {/* Quick WhatsApp Reply: On The Way */}
                           <button
                             onClick={() => handleSendQuickWhatsAppReply(order, 'on_the_way')}
-                            className="inline-flex items-center gap-1 bg-purple-900/40 hover:bg-purple-900 text-purple-300 px-2.5 py-2 rounded-xl text-[11px] font-medium border border-purple-600/40 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 bg-purple-900/40 hover:bg-purple-900 text-purple-300 px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl text-[11px] font-medium border border-purple-600/40 transition-colors cursor-pointer"
                             title="إرسال رسالة جاهزة للزبون: المندوب بالطريق"
                           >
                             <span>🛵 بالطريق</span>
@@ -3549,33 +3588,33 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                               href={order.location.mapUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 bg-[#C5A059] hover:bg-[#D4AF37] text-black px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
+                              className="inline-flex items-center gap-1.5 bg-[#C5A059] hover:bg-[#D4AF37] text-black px-3 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
                             >
-                              <MapPin className="w-3.5 h-3.5 text-black stroke-[2.5]" />
-                              <span>فتح الموقع على الخريطة (GPS)</span>
-                              <ExternalLink className="w-3 h-3 text-black" />
+                              <MapPin className="w-3.5 h-3.5 text-black stroke-[2.5] shrink-0" />
+                              <span>الموقع GPS</span>
+                              <ExternalLink className="w-3 h-3 text-black shrink-0" />
                             </a>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 bg-[#27272A] text-[#A1A1AA] px-3 py-2 rounded-xl text-xs border border-[#3F3F46]">
-                              <MapPin className="w-3.5 h-3.5" />
-                              <span>الموقع: {order?.customer?.address || 'غير محدد'}</span>
+                            <span className="inline-flex items-center gap-1.5 bg-[#27272A] text-[#A1A1AA] px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs border border-[#3F3F46]">
+                              <MapPin className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">الموقع: {order?.customer?.address || 'غير محدد'}</span>
                             </span>
                           )}
 
                           {/* Copy Courier Summary */}
                           <button
                             onClick={() => handleCopyDispatchText(order)}
-                            className="inline-flex items-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] px-3 py-2 rounded-xl text-xs font-medium border border-[#3F3F46] transition-colors cursor-pointer mr-auto"
+                            className="inline-flex items-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-medium border border-[#3F3F46] transition-colors cursor-pointer mr-auto"
                             title="نسخ ملخص الطلب لإرساله للمندوب"
                           >
                             {copiedId === order.id ? (
                               <>
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                <span>تم نسخ بيانات المندوب!</span>
+                                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span>تم النسخ!</span>
                               </>
                             ) : (
                               <>
-                                <Copy className="w-3.5 h-3.5 text-[#D4AF37]" />
+                                <Copy className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
                                 <span>نسخ للمندوب</span>
                               </>
                             )}
@@ -3601,24 +3640,24 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         </div>
 
                         {/* Prominent Full-Screen Order Items View Button for Father */}
-                        <div className="flex items-center justify-between bg-gradient-to-r from-[#221B13] via-[#2A2016] to-[#221B13] p-3.5 rounded-xl border border-[#D4AF37]/50 shadow-md">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center text-[#FFE58F] text-lg font-bold">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-gradient-to-r from-[#221B13] via-[#2A2016] to-[#221B13] p-3 sm:p-3.5 rounded-xl border border-[#D4AF37]/50 shadow-md gap-2.5 sm:gap-3">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#D4AF37]/20 border border-[#D4AF37]/40 flex items-center justify-center text-[#FFE58F] text-base sm:text-lg font-bold shrink-0">
                               🛍️
                             </div>
-                            <div>
-                              <h4 className="font-extrabold text-sm text-[#FFE58F]">
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-extrabold text-xs sm:text-sm text-[#FFE58F] truncate">
                                 سلة منتجات الطلب ({(Array.isArray(order?.items) ? order.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطعة)
                               </h4>
-                              <p className="text-xs text-[#D4D4D8]">
-                                انقر لعرض كافة المنتجات بصور مكبرة وواضحة جداً لتجهيزها
+                              <p className="text-[11px] sm:text-xs text-[#D4D4D8] truncate">
+                                انقر لعرض كافة المنتجات بصور مكبرة لتجهيزها
                               </p>
                             </div>
                           </div>
 
                           <button
                             onClick={() => setFullScreenOrderModal(order)}
-                            className="bg-gradient-to-r from-[#C5A059] to-[#D4AF37] hover:brightness-110 text-black font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg transition-all cursor-pointer whitespace-nowrap hover:scale-105"
+                            className="bg-gradient-to-r from-[#C5A059] to-[#D4AF37] hover:brightness-110 text-black font-black px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg transition-all cursor-pointer whitespace-nowrap hover:scale-105 w-full sm:w-auto"
                           >
                             <span>عرض كافة المنتجات بشاشة كاملة 🖼️</span>
                           </button>
@@ -3628,7 +3667,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <h4 className="font-semibold text-xs text-[#A1A1AA] flex items-center gap-1.5">
-                              <ShoppingBag className="w-3.5 h-3.5 text-[#D4AF37]" />
+                              <ShoppingBag className="w-3.5 h-3.5 text-[#D4AF37] shrink-0" />
                               <span>المنتجات المطلوبة ({(Array.isArray(order?.items) ? order.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطع):</span>
                             </h4>
 
@@ -3647,7 +3686,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                 <div
                                   key={idx}
                                   onClick={() => setSelectedProductDetail({ product: item.product, quantity: item.quantity })}
-                                  className="flex items-center justify-between gap-3 py-2 px-2 rounded-lg hover:bg-white/5 border-b border-[#27272A] last:border-0 cursor-pointer transition-colors"
+                                  className="flex items-center justify-between gap-3 py-2 px-2 rounded-lg hover:bg-white/5 border-b border-[#2E2E33] last:border-0 cursor-pointer transition-colors"
                                   title="انقر لعرض تفاصيل وصورة المنتج المكبرة"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0">
@@ -3655,10 +3694,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                       <img
                                         src={item.product.image}
                                         alt={item.product.name}
-                                        className="w-12 h-12 rounded-lg object-cover border border-[#2E2E33] shrink-0"
+                                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover border border-[#2E2E33] shrink-0"
                                       />
                                     ) : (
-                                      <div className="w-12 h-12 rounded-lg bg-[#27272A] border border-[#2E2E33] shrink-0" />
+                                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-[#27272A] border border-[#2E2E33] shrink-0" />
                                     )}
                                     <div className="truncate">
                                       <p className="font-bold text-white truncate hover:text-[#FFE58F] transition-colors">{item.product.name}</p>
@@ -3667,7 +3706,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                       </p>
                                     </div>
                                   </div>
-                                  <span className="font-bold text-[#FFE58F] shrink-0 font-mono">
+                                  <span className="font-bold text-[#FFE58F] shrink-0 font-mono text-xs sm:text-sm">
                                     {formatIQD(item.product.price * item.quantity)}
                                   </span>
                                 </div>
@@ -3697,49 +3736,49 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         </div>
 
                         {/* Status Change Action Buttons (Sequential for the father) */}
-                        <div className="pt-2 border-t border-[#2E2E33] flex flex-wrap items-center gap-2">
-                          <span className="text-xs text-[#71717A] font-semibold">مراحل التوصيل:</span>
+                        <div className="pt-2 border-t border-[#2E2E33] flex flex-wrap items-center gap-1.5 sm:gap-2">
+                          <span className="text-[11px] sm:text-xs text-[#71717A] font-semibold">مراحل التوصيل:</span>
 
                           <button
                             onClick={() => handleStatusChange(order.id, 'preparing')}
                             disabled={isUpdating || order.status === 'preparing'}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                               order.status === 'preparing'
                                 ? 'bg-blue-600 text-white shadow-xs'
                                 : 'bg-[#27272A] hover:bg-[#3F3F46] text-blue-300 border border-blue-500/30'
                             }`}
                           >
-                            <span>📦 بدء التجهيز</span>
+                            <span>📦 تجهيز</span>
                           </button>
 
                           <button
                             onClick={() => handleStatusChange(order.id, 'out_for_delivery')}
                             disabled={isUpdating || order.status === 'out_for_delivery'}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                               order.status === 'out_for_delivery'
                                 ? 'bg-purple-600 text-white shadow-xs'
                                 : 'bg-[#27272A] hover:bg-[#3F3F46] text-purple-300 border border-purple-500/30'
                             }`}
                           >
-                            <span>🛵 تسليم للمندوب</span>
+                            <span>🛵 للمندوب</span>
                           </button>
 
                           <button
                             onClick={() => handleStatusChange(order.id, 'delivered')}
                             disabled={isUpdating || order.status === 'delivered'}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                               order.status === 'delivered'
                                 ? 'bg-emerald-600 text-white shadow-xs'
                                 : 'bg-[#27272A] hover:bg-[#3F3F46] text-emerald-300 border border-emerald-500/30'
                             }`}
                           >
-                            <span>✅ تم التوصيل للمكان المطلوب</span>
+                            <span>✅ تم التوصيل</span>
                           </button>
 
                           <button
                             onClick={() => handleStatusChange(order.id, 'received')}
                             disabled={isUpdating || order.status === 'received'}
-                            className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer ${
+                            className={`px-2 py-1.5 rounded-lg text-[11px] font-medium transition-all cursor-pointer ${
                               order.status === 'received'
                                 ? 'bg-amber-500 text-black'
                                 : 'bg-[#27272A] text-[#A1A1AA] hover:text-white'
@@ -3774,29 +3813,29 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
       {fullScreenOrderModal && (
         <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-md overflow-y-auto p-3 sm:p-6 flex items-center justify-center animate-fade-in">
           <div className="bg-[#18181B] text-white w-full max-w-4xl rounded-2xl border border-[#D4AF37]/50 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-            <div className="p-4 sm:p-6 bg-gradient-to-r from-[#1E1710] via-[#2A1E14] to-[#1E1710] border-b border-[#D4AF37]/30 flex items-center justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="bg-[#D4AF37] text-black text-xs font-black px-2.5 py-0.5 rounded-full">
-                    شاشة تجهيز الطلب بشاشة كاملة 🖼️
+            <div className="p-3.5 sm:p-5 bg-gradient-to-r from-[#1E1710] via-[#2A1E14] to-[#1E1710] border-b border-[#D4AF37]/30 flex items-start justify-between gap-3">
+              <div className="space-y-1 min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-[#D4AF37] text-black text-[10px] sm:text-xs font-black px-2.5 py-0.5 rounded-full">
+                    شاشة تجهيز الطلب 🖼️
                   </span>
-                  <span className="font-mono text-amber-300 font-bold text-base">
+                  <span className="font-mono text-amber-300 font-bold text-sm sm:text-base">
                     #{fullScreenOrderModal?.trackingCode || '0000'}
                   </span>
                 </div>
-                <h3 className="text-base sm:text-lg font-bold text-white">
+                <h3 className="text-sm sm:text-base font-bold text-white truncate">
                   الزبون: {fullScreenOrderModal?.customer?.name || 'زبون'} | 📞 {fullScreenOrderModal?.customer?.phone || 'بدون رقم'}
                 </h3>
-                <p className="text-xs text-[#D4D4D8]">
+                <p className="text-[11px] sm:text-xs text-[#D4D4D8] truncate">
                   العنوان: {fullScreenOrderModal?.customer?.governorate || 'العراق'} - {fullScreenOrderModal?.customer?.address || ''}
                 </p>
               </div>
 
               <button
                 onClick={() => setFullScreenOrderModal(null)}
-                className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors cursor-pointer"
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors cursor-pointer shrink-0"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
 
@@ -3857,25 +3896,25 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
               )}
             </div>
 
-            <div className="p-4 sm:px-6 bg-[#121214] border-t border-[#2E2E33] flex flex-wrap items-center justify-between gap-3">
+            <div className="p-3 sm:p-4 sm:px-6 bg-[#121214] border-t border-[#2E2E33] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3">
               <button
                 onClick={() => {
                   handleCopyDispatchText(fullScreenOrderModal);
                   alert('تم نسخ تفاصيل الطلب للمندوب بنجاح!');
                 }}
-                className="bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 cursor-pointer"
+                className="bg-[#27272A] hover:bg-[#3F3F46] text-[#FFE58F] font-bold px-3.5 py-2 sm:py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer w-full sm:w-auto"
               >
                 <Copy className="w-4 h-4 text-[#D4AF37]" />
                 <span>نسخ كشف الطلب للمندوب</span>
               </button>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <button
                   onClick={() => {
                     handleStatusChange(fullScreenOrderModal.id, 'preparing');
                     setFullScreenOrderModal(null);
                   }}
-                  className="bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-md cursor-pointer"
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2 sm:py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md cursor-pointer w-full sm:w-auto"
                 >
                   <Package className="w-4 h-4" />
                   <span>تحديث إلى (جاري التجهيز) 📦</span>
@@ -3883,7 +3922,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                 <button
                   onClick={() => setFullScreenOrderModal(null)}
-                  className="bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-6 py-2.5 rounded-xl text-xs cursor-pointer shadow-md"
+                  className="bg-[#D4AF37] hover:bg-[#FFE58F] text-black font-extrabold px-5 py-2 sm:py-2.5 rounded-xl text-xs cursor-pointer shadow-md text-center w-full sm:w-auto"
                 >
                   إغلاق شاشة العرض
                 </button>
@@ -4202,19 +4241,19 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
             </div>
 
             {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#2E2E33]">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-3 border-t border-[#2E2E33]">
               <button
                 onClick={() => {
                   setEditingProductModal(null);
                   setIsAddingNewProductModal(false);
                 }}
-                className="bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer"
+                className="bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer text-center"
               >
                 إلغاء
               </button>
               <button
                 onClick={handleSaveProductForm}
-                className="bg-gradient-to-r from-[#D4AF37] to-[#AA7C11] hover:brightness-110 text-black text-xs font-extrabold px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                className="bg-gradient-to-r from-[#D4AF37] to-[#AA7C11] hover:brightness-110 text-black text-xs font-extrabold px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <span>حفظ وتطبيق السعر فوراً ✨</span>
               </button>
