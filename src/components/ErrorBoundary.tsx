@@ -32,6 +32,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   private handleReload = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
     window.location.reload();
   };
 
@@ -43,7 +44,8 @@ export class ErrorBoundary extends Component<Props, State> {
       localStorage.removeItem('queen_last_order_code');
       localStorage.removeItem('queen_pending_support_chats');
     } catch {}
-    window.location.href = '/';
+    this.setState({ hasError: false, error: null, errorInfo: null });
+    window.location.reload();
   };
 
   private handleTryAgain = () => {

@@ -1328,7 +1328,7 @@ ${text}
     }, 250);
   };
 
-  const totalUnreadChatsCount = chatThreads.reduce((acc, t) => acc + (t.unreadCount || 0), 0);
+  const totalUnreadChatsCount = (Array.isArray(chatThreads) ? chatThreads : []).reduce((acc, t) => acc + (t?.unreadCount || 0), 0);
 
   const handleMarkAllMessagesAsRead = async () => {
     if (!window.confirm('هل تريد مسح كافة إشعارات المحادثات وتصفير العداد؟')) return;
@@ -1614,8 +1614,16 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
     }
   };
 
+  // Safe guarded arrays for crash-free rendering
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  const safeAdminProducts = Array.isArray(adminProducts) ? adminProducts : [];
+  const safeAdminCategories = Array.isArray(adminCategories) ? adminCategories : [];
+  const safeChatThreads = Array.isArray(chatThreads) ? chatThreads : [];
+  const safeSelectedChatMessages = Array.isArray(selectedChatMessages) ? selectedChatMessages : [];
+
   // Filter and search
-  const filteredOrders = orders.filter((o) => {
+  const filteredOrders = safeOrders.filter((o) => {
+    if (!o) return false;
     // Exclude delivered/cancelled from 'all' tab as requested to keep dashboard clean
     const matchesFilter = activeFilter === 'all' 
       ? (o.status !== 'delivered' && o.status !== 'cancelled')
@@ -1624,11 +1632,16 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
     const query = searchQuery.trim().toLowerCase();
     if (!query) return matchesFilter;
 
+    const trackingCodeStr = (o.trackingCode || '').toLowerCase();
+    const customerNameStr = (o.customer?.name || '').toLowerCase();
+    const customerPhoneStr = (o.customer?.phone || '');
+    const customerAddressStr = (o.customer?.address || '').toLowerCase();
+
     const matchesSearch =
-      o.trackingCode.toLowerCase().includes(query) ||
-      o.customer.name.toLowerCase().includes(query) ||
-      o.customer.phone.includes(query) ||
-      o.customer.address.toLowerCase().includes(query);
+      trackingCodeStr.includes(query) ||
+      customerNameStr.includes(query) ||
+      customerPhoneStr.includes(query) ||
+      customerAddressStr.includes(query);
 
     return matchesFilter && matchesSearch;
   });
@@ -1659,14 +1672,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
   }, [isAuthenticated]);
 
   const stats = {
-    total: orders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled').length,
-    received: orders.filter((o) => o.status === 'received').length,
-    preparing: orders.filter((o) => o.status === 'preparing').length,
-    outForDelivery: orders.filter((o) => o.status === 'out_for_delivery').length,
-    delivered: orders.filter((o) => o.status === 'delivered').length,
-    revenue: orders
-      .filter((o) => o.status === 'delivered')
-      .reduce((acc, o) => acc + o.total, 0),
+    total: safeOrders.filter(o => o && o.status !== 'delivered' && o.status !== 'cancelled').length,
+    received: safeOrders.filter((o) => o && o.status === 'received').length,
+    preparing: safeOrders.filter((o) => o && o.status === 'preparing').length,
+    outForDelivery: safeOrders.filter((o) => o && o.status === 'out_for_delivery').length,
+    delivered: safeOrders.filter((o) => o && o.status === 'delivered').length,
+    revenue: safeOrders
+      .filter((o) => o && o.status === 'delivered')
+      .reduce((acc, o) => acc + (Number(o?.total) || 0), 0),
   };
 
   if (!isOpen) return null;
@@ -1929,14 +1942,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         طلب جديد الآن!
                       </span>
                       <span className="font-mono font-bold text-amber-300 text-sm">
-                        #{newOrderAlertBanner.trackingCode}
+                        #{newOrderAlertBanner?.trackingCode || '0000'}
                       </span>
                     </div>
                     <h4 className="font-bold text-base text-white mt-1">
-                      الزبون: {newOrderAlertBanner.customer.name} ({newOrderAlertBanner.customer.governorate}) — {formatIQD(newOrderAlertBanner.total)}
+                      الزبون: {newOrderAlertBanner?.customer?.name || 'زبون'} ({newOrderAlertBanner?.customer?.governorate || 'العراق'}) — {formatIQD(newOrderAlertBanner?.total || 0)}
                     </h4>
                     <p className="text-xs text-amber-200/80">
-                      العنوان: {newOrderAlertBanner.customer.address}
+                      العنوان: {newOrderAlertBanner?.customer?.address || ''}
                     </p>
                   </div>
                 </div>
@@ -2249,31 +2262,38 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                   {/* Threads List Sidebar (Cols 5) */}
                   <div className={`lg:col-span-5 space-y-2 max-h-[500px] overflow-y-auto pr-1 ${selectedChatOrderId ? 'hidden lg:block' : 'block'}`}>
-                    {chatThreads.length === 0 ? (
+                    {safeChatThreads.length === 0 ? (
                       <div className="p-8 text-center text-[#A1A1AA] space-y-2 bg-[#121214] rounded-xl border border-[#27272A]">
                         <MessageSquare className="w-8 h-8 mx-auto text-[#52525B]" />
                         <p className="text-xs font-semibold">لا توجد محادثات زبائن نشطة حالياً</p>
                       </div>
                     ) : (
-                      chatThreads
+                      safeChatThreads
                         .filter((t) => {
+                          if (!t) return false;
                           const q = chatSearchQuery.trim().toLowerCase();
                           if (!q) return true;
+                          const oId = (t.orderId || '').toLowerCase();
+                          const cName = (t.customerName || '').toLowerCase();
+                          const cPhone = (t.customerPhone || '');
                           return (
-                            t.orderId.toLowerCase().includes(q) ||
-                            (t.customerName && t.customerName.toLowerCase().includes(q)) ||
-                            (t.customerPhone && t.customerPhone.includes(q))
+                            oId.includes(q) ||
+                            cName.includes(q) ||
+                            cPhone.includes(q)
                           );
                         })
                         .map((thread) => {
+                          if (!thread) return null;
                           const isSelected = selectedChatOrderId === thread.orderId;
                           return (
                             <div
-                              key={thread.orderId}
+                              key={thread.orderId || Math.random()}
                               onClick={() => {
-                                setSelectedChatOrderId(thread.orderId);
-                                fetchSelectedChatMessages(thread.orderId);
-                                markThreadAsRead(thread.orderId);
+                                if (thread.orderId) {
+                                  setSelectedChatOrderId(thread.orderId);
+                                  fetchSelectedChatMessages(thread.orderId);
+                                  markThreadAsRead(thread.orderId);
+                                }
                               }}
                               className={`p-3.5 rounded-xl border cursor-pointer transition-all space-y-2 ${
                                 isSelected
@@ -2286,7 +2306,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                   #{thread.orderId}
                                 </span>
 
-                                {thread.unreadCount > 0 ? (
+                                {(thread.unreadCount || 0) > 0 ? (
                                   <span className="bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full animate-pulse shadow-sm">
                                     {thread.unreadCount} جديد 🔔
                                   </span>
@@ -2310,18 +2330,18 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                               </div>
 
                               <p className="text-xs text-[#A1A1AA] truncate font-normal">
-                                {thread.lastMessage}
+                                {thread.lastMessage || 'رسالة جديدة'}
                               </p>
 
                               <div className="flex items-center justify-between text-[10px] text-[#71717A] pt-1 border-t border-[#27272A]/50">
                                 <span>
-                                  {new Date(thread.lastMessageTime).toLocaleTimeString('ar-IQ', {
+                                  {new Date(thread.lastMessageTime || Date.now()).toLocaleTimeString('ar-IQ', {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                   })}
                                 </span>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-[9px] bg-[#27272A] px-1.5 py-0.5 rounded-md text-[#71717A] font-mono">{thread.messageCount} رسالة</span>
+                                  <span className="text-[9px] bg-[#27272A] px-1.5 py-0.5 rounded-md text-[#71717A] font-mono">{thread.messageCount || 1} رسالة</span>
                                   <button
                                     type="button"
                                     onClick={(e) => handleResolveChatThread(thread.orderId, e)}
@@ -2430,16 +2450,17 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                         {/* Messages Thread Container */}
                         <div id="admin-chat-messages-container" className="h-[300px] overflow-y-auto space-y-3 p-3 bg-[#0D0D10] rounded-xl border border-[#27272A] flex-1">
-                          {selectedChatMessages.length === 0 ? (
+                          {safeSelectedChatMessages.length === 0 ? (
                             <div className="h-full flex items-center justify-center text-center text-xs text-[#71717A]">
                               لا توجد رسائل سابقة في هذه المحادثة. يمكنك بدء المحادثة بكتابة أول رد.
                             </div>
                           ) : (
-                            selectedChatMessages.map((msg) => {
+                            safeSelectedChatMessages.map((msg) => {
+                              if (!msg) return null;
                               const isAdmin = msg.sender === 'admin';
                               return (
                                 <div
-                                  key={msg.id}
+                                  key={msg.id || Math.random()}
                                   className={`flex flex-col ${isAdmin ? 'items-end' : 'items-start'} space-y-1`}
                                 >
                                   <div className="flex items-center gap-1.5 text-[10px] text-[#A1A1AA] px-1">
@@ -2454,7 +2475,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                     )}
                                     <span>•</span>
                                     <span>
-                                      {new Date(msg.createdAt).toLocaleTimeString('ar-IQ', {
+                                      {new Date(msg.createdAt || Date.now()).toLocaleTimeString('ar-IQ', {
                                         hour: '2-digit',
                                         minute: '2-digit',
                                       })}
@@ -2468,7 +2489,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                                         : 'bg-[#C5A059] text-black font-bold rounded-tr-none shadow-xs'
                                     }`}
                                   >
-                                    {msg.text}
+                                    {msg.text || ''}
                                   </div>
                                 </div>
                               );
@@ -2930,7 +2951,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       <Tag className="w-4 h-4" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-sm sm:text-base text-white">الأقسام الحالية المتاحة في المتجر ({adminCategories.length})</h4>
+                      <h4 className="font-bold text-sm sm:text-base text-white">الأقسام الحالية المتاحة في المتجر ({safeAdminCategories.length})</h4>
                       <p className="text-[11px] text-[#A1A1AA] mt-0.5">
                         قائمة بجميع الأقسام والفلترز الحالية. يمكنك حذف أي قسم تم إنشاؤه يدوياً.
                       </p>
@@ -2948,9 +2969,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#2E2E33]/40">
-                        {adminCategories.map((cat) => {
+                        {safeAdminCategories.map((cat) => {
+                          if (!cat) return null;
                           const isProtected = ['all', 'bestsellers', 'offers'].includes(cat.id);
-                          const subsExcludingAll = (cat.subCategories || []).filter(s => s.id !== 'all').map(s => s.name);
+                          const subsExcludingAll = (Array.isArray(cat.subCategories) ? cat.subCategories : []).filter(s => s && s.id !== 'all').map(s => s?.name || '');
                           
                           return (
                             <tr key={cat.id} className="hover:bg-white/2 transition-colors">
@@ -3063,9 +3085,18 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
-                  {adminProducts
-                    .filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.brand || p.category || '').toLowerCase().includes(productSearch.toLowerCase()))
+                  {safeAdminProducts
+                    .filter(p => {
+                      if (!p) return false;
+                      if (!productSearch) return true;
+                      const q = productSearch.toLowerCase();
+                      const pName = (p.name || '').toLowerCase();
+                      const pBrand = (p.brand || '').toLowerCase();
+                      const pCategory = (p.category || '').toLowerCase();
+                      return pName.includes(q) || pBrand.includes(q) || pCategory.includes(q);
+                    })
                     .map((product) => {
+                      if (!product) return null;
                       const hasDiscount = Boolean(product.originalPrice && product.originalPrice > product.price);
                       const discountPercentage = hasDiscount 
                         ? Math.round(((product.originalPrice! - product.price) / product.originalPrice!) * 100)
@@ -3268,7 +3299,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       );
                     })}
 
-                  {adminProducts.length === 0 && (
+                  {safeAdminProducts.length === 0 && (
                     <div className="bg-[#18181B] rounded-2xl border border-[#2E2E33] p-10 sm:p-14 text-center space-y-3">
                       <div className="w-12 h-12 rounded-xl bg-[#27272A] text-[#C5A059] flex items-center justify-center mx-auto">
                         <Package className="w-6 h-6" />
@@ -3287,7 +3318,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     </div>
                   )}
 
-                  {adminProducts.length > 0 && adminProducts.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.brand || p.category || '').toLowerCase().includes(productSearch.toLowerCase())).length === 0 && (
+                  {safeAdminProducts.length > 0 && safeAdminProducts.filter(p => !productSearch || (p?.name || '').toLowerCase().includes(productSearch.toLowerCase()) || (p?.brand || p?.category || '').toLowerCase().includes(productSearch.toLowerCase())).length === 0 && (
                     <div className="bg-[#18181B] rounded-xl border border-[#2E2E33] p-8 text-center text-xs text-[#A1A1AA]">
                       لم يتم العثور على منتجات تطابق "{productSearch}"
                     </div>
@@ -3365,18 +3396,18 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                       <div className="p-4 sm:px-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#2E2E33]">
                         <div className="flex items-center gap-3">
                           <span className="font-mono font-bold text-base text-[#FFE58F] bg-black/40 px-3 py-1 rounded-lg border border-[#D4AF37]/30">
-                            #{order.trackingCode}
+                            #{order?.trackingCode || '0000'}
                           </span>
 
                           <div>
                             <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                              <span>{order.customer.name}</span>
+                              <span>{order?.customer?.name || 'زبون'}</span>
                               <span className="text-[11px] text-[#A1A1AA] font-normal">
-                                ({order.customer.governorate})
+                                ({order?.customer?.governorate || 'العراق'})
                               </span>
                             </h3>
                             <p className="text-[11px] text-[#71717A]">
-                              {new Date(order.createdAt).toLocaleTimeString('ar-IQ', {
+                              {new Date(order?.createdAt || Date.now()).toLocaleTimeString('ar-IQ', {
                                 hour: '2-digit',
                                 minute: '2-digit',
                                 day: 'numeric',
@@ -3409,7 +3440,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                           </span>
 
                           <span className="font-bold text-[#D4AF37] text-sm sm:text-base">
-                            {formatIQD(order.total)}
+                            {formatIQD(order?.total || 0)}
                           </span>
                         </div>
                       </div>
@@ -3420,16 +3451,16 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         <div className="flex flex-wrap gap-2">
                           {/* Direct Call */}
                           <a
-                            href={`tel:${order.customer.phone}`}
+                            href={`tel:${order?.customer?.phone || ''}`}
                             className="inline-flex items-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-white px-3 py-2 rounded-xl text-xs font-semibold border border-[#3F3F46] transition-colors"
                           >
                             <Phone className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>اتصال ({order.customer.phone})</span>
+                            <span>اتصال ({order?.customer?.phone || 'بدون رقم'})</span>
                           </a>
 
                           {/* WhatsApp Chat */}
                           <a
-                            href={`https://wa.me/964${order.customer.phone.replace(/^0+/, '')}`}
+                            href={`https://wa.me/964${(order?.customer?.phone || '').replace(/^0+/, '')}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1.5 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 px-3 py-2 rounded-xl text-xs font-semibold border border-emerald-700/50 transition-colors"
@@ -3440,7 +3471,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                           {/* Live Chat Direct Button */}
                           <button
-                            onClick={() => handleOpenChatFromToast(order.trackingCode)}
+                            onClick={() => handleOpenChatFromToast(order?.trackingCode || '')}
                             className="inline-flex items-center gap-1.5 bg-[#D4AF37] hover:bg-[#FFE58F] text-black px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
                             title="فتح الشات المباشر مع هذا الزبون"
                           >
@@ -3481,7 +3512,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                           ) : (
                             <span className="inline-flex items-center gap-1.5 bg-[#27272A] text-[#A1A1AA] px-3 py-2 rounded-xl text-xs border border-[#3F3F46]">
                               <MapPin className="w-3.5 h-3.5" />
-                              <span>الموقع: {order.customer.address}</span>
+                              <span>الموقع: {order?.customer?.address || 'غير محدد'}</span>
                             </span>
                           )}
 
@@ -3509,14 +3540,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                         <div className="bg-[#121214] p-3 rounded-xl border border-[#27272A] space-y-1.5 text-xs">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-[#A1A1AA]">
-                              <strong>العنوان: </strong> {order.customer.address} ({order.customer.governorate})
+                              <strong>العنوان: </strong> {order?.customer?.address || ''} ({order?.customer?.governorate || 'العراق'})
                             </span>
                             <span className="text-[#D4AF37] font-semibold bg-[#27272A] px-2 py-0.5 rounded-md">
-                              موعد التوصيل: {order.deliveryTiming === 'today' ? 'اليوم' : order.deliveryTiming === 'tomorrow' ? 'غداً' : 'خلال هذا الأسبوع'} {order.customTimingText}
+                              موعد التوصيل: {order.deliveryTiming === 'today' ? 'اليوم' : order.deliveryTiming === 'tomorrow' ? 'غداً' : 'خلال هذا الأسبوع'} {order.customTimingText || ''}
                             </span>
                           </div>
 
-                          {order.customer.notes && (
+                          {order?.customer?.notes && (
                             <p className="text-amber-300 text-[11px] pt-1 border-t border-[#27272A]">
                               <strong>ملاحظة الزبون: </strong> {order.customer.notes}
                             </p>
@@ -3531,7 +3562,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                             </div>
                             <div>
                               <h4 className="font-extrabold text-sm text-[#FFE58F]">
-                                سلة منتجات الطلب ({order.items.reduce((acc, i) => acc + i.quantity, 0)} قطعة)
+                                سلة منتجات الطلب ({(Array.isArray(order?.items) ? order.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطعة)
                               </h4>
                               <p className="text-xs text-[#D4D4D8]">
                                 انقر لعرض كافة المنتجات بصور مكبرة وواضحة جداً لتجهيزها
@@ -3704,14 +3735,14 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     شاشة تجهيز الطلب بشاشة كاملة 🖼️
                   </span>
                   <span className="font-mono text-amber-300 font-bold text-base">
-                    #{fullScreenOrderModal.trackingCode}
+                    #{fullScreenOrderModal?.trackingCode || '0000'}
                   </span>
                 </div>
                 <h3 className="text-base sm:text-lg font-bold text-white">
-                  الزبون: {fullScreenOrderModal.customer.name} | 📞 {fullScreenOrderModal.customer.phone}
+                  الزبون: {fullScreenOrderModal?.customer?.name || 'زبون'} | 📞 {fullScreenOrderModal?.customer?.phone || 'بدون رقم'}
                 </h3>
                 <p className="text-xs text-[#D4D4D8]">
-                  العنوان: {fullScreenOrderModal.customer.governorate} - {fullScreenOrderModal.customer.address}
+                  العنوان: {fullScreenOrderModal?.customer?.governorate || 'العراق'} - {fullScreenOrderModal?.customer?.address || ''}
                 </p>
               </div>
 
@@ -3729,7 +3760,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                   قائمة المنتجات المطلوبة ({(Array.isArray(fullScreenOrderModal?.items) ? fullScreenOrderModal.items.reduce((acc, i) => acc + (i?.quantity || 1), 0) : 0)} قطع) - انقر على أي منتج لعرض تفاصيله الكاملة:
                 </h4>
                 <span className="font-bold text-emerald-400 text-sm">
-                  المجموع الكلي: {formatIQD(fullScreenOrderModal.total)}
+                  المجموع الكلي: {formatIQD(fullScreenOrderModal?.total || 0)}
                 </span>
               </div>
 
@@ -3737,10 +3768,10 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 {Array.isArray(fullScreenOrderModal?.items) && fullScreenOrderModal.items.map((item, idx) => (
                   <div
                     key={idx}
-                    onClick={() => setSelectedProductDetail({ product: item.product, quantity: item.quantity })}
+                    onClick={() => setSelectedProductDetail({ product: item?.product, quantity: item?.quantity || 1 })}
                     className="bg-[#121214] p-4 rounded-2xl border border-[#2E2E33] hover:border-[#D4AF37] transition-all flex items-center gap-4 cursor-pointer group shadow-md"
                   >
-                    {item.product.image ? (
+                    {item?.product?.image ? (
                       <img
                         src={getProductImageUrl(item.product)}
                         alt={item.product.name}
@@ -3754,17 +3785,17 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
 
                     <div className="space-y-1.5 flex-1 min-w-0">
                       <span className="text-[10px] bg-[#C5A059]/20 text-[#FFE58F] px-2 py-0.5 rounded font-bold">
-                        {item.product.brand}
+                        {item?.product?.brand || 'الملكة'}
                       </span>
                       <h5 className="font-bold text-sm sm:text-base text-white group-hover:text-[#FFE58F] transition-colors line-clamp-2">
-                        {item.product.name}
+                        {item?.product?.name || 'منتج'}
                       </h5>
                       <div className="flex items-center justify-between text-xs pt-1">
                         <span className="text-[#A1A1AA]">
-                          الكمية: <strong className="text-white text-sm bg-[#27272A] px-2 py-0.5 rounded">{item.quantity}</strong>
+                          الكمية: <strong className="text-white text-sm bg-[#27272A] px-2 py-0.5 rounded">{item?.quantity || 1}</strong>
                         </span>
                         <span className="font-mono font-bold text-emerald-400 text-sm">
-                          {formatIQD(item.product.price * item.quantity)}
+                          {formatIQD((item?.product?.price || 0) * (item?.quantity || 1))}
                         </span>
                       </div>
                     </div>
@@ -3772,7 +3803,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                 ))}
               </div>
 
-              {fullScreenOrderModal.customer.notes && (
+              {fullScreenOrderModal?.customer?.notes && (
                 <div className="bg-amber-950/40 border border-amber-600/50 p-4 rounded-xl text-xs text-amber-200 space-y-1">
                   <strong>ملاحظات الزبون الخاصة بهذا الطلب:</strong>
                   <p>{fullScreenOrderModal.customer.notes}</p>
@@ -4017,7 +4048,7 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
                     className="w-full bg-[#121214] border border-[#2E2E33] focus:border-[#D4AF37] text-xs text-white p-2.5 rounded-xl outline-hidden cursor-pointer"
                   >
-                    {adminCategories.filter(c => c.id !== 'all' && c.id !== 'bestsellers' && c.id !== 'offers').map(cat => (
+                    {safeAdminCategories.filter(c => c && c.id !== 'all' && c.id !== 'bestsellers' && c.id !== 'offers').map(cat => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>
@@ -4031,8 +4062,11 @@ ${order.customer.notes ? `📝 *ملاحظات الزبون:* ${order.customer.n
                     className="w-full bg-[#121214] border border-[#2E2E33] focus:border-[#D4AF37] text-xs text-white p-2.5 rounded-xl outline-hidden cursor-pointer"
                   >
                     <option value="">بدون تصنيف فرعي</option>
-                    {(adminCategories.find(c => c.id === productForm.category)?.subCategories || [])
-                      .filter(s => s.id !== 'all')
+                    {(Array.isArray(safeAdminCategories.find(c => c?.id === productForm.category)?.subCategories) 
+                      ? safeAdminCategories.find(c => c?.id === productForm.category)!.subCategories 
+                      : []
+                    )
+                      .filter(s => s && s.id !== 'all')
                       .map(sub => (
                         <option key={sub.id} value={sub.id}>{sub.name}</option>
                       ))}
