@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MessageCircle, X } from 'lucide-react';
-import { STORE_INFO } from '../data/products';
+import { STORE_WHATSAPP_NUMBER } from '../utils/whatsapp';
 
 export const FloatingWhatsApp: React.FC = () => {
   const [showTooltip, setShowTooltip] = useState<boolean>(true);
@@ -23,7 +23,7 @@ export const FloatingWhatsApp: React.FC = () => {
       {/* Floating WhatsApp button */}
       <a
         id="floating-whatsapp-btn"
-        href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود الاستفسار والطلب')}`}
+        href={`https://wa.me/${STORE_WHATSAPP_NUMBER}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود الاستفسار والطلب')}`}
         target="_blank"
         rel="noopener noreferrer"
         className="w-12 h-12 rounded-full bg-[#25D366] hover:bg-[#20bd5a] text-white flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 cursor-pointer relative animate-gold-pulse"

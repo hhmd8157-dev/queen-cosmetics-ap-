@@ -1,6 +1,7 @@
 import React from 'react';
 import { Crown, Sparkles, MessageCircle, Truck, ShieldCheck, Clock, ArrowLeft, Star } from 'lucide-react';
 import { STORE_INFO } from '../data/products';
+import { STORE_WHATSAPP_NUMBER } from '../utils/whatsapp';
 
 interface HeroBannerProps {
   onExploreClick: () => void;
@@ -52,7 +53,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ onExploreClick, onCustom
 
               <a
                 id="hero-whatsapp-order-btn"
-                href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود الاستفسار والطلب من التشكيلة المتوفرة')}`}
+                href={`https://wa.me/${STORE_WHATSAPP_NUMBER}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود الاستفسار والطلب من التشكيلة المتوفرة')}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-5 py-3 rounded-lg font-semibold text-xs sm:text-sm shadow-xs transition-colors"

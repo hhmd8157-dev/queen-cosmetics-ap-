@@ -249,6 +249,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     e?.stopPropagation();
     setFormError('');
 
+    // If WhatsApp is clicked without filling name/phone, launch WhatsApp immediately with cart & placeholders
+    if (isWhatsApp && (!customer.name.trim() || !customer.phone.trim())) {
+      const whatsappUrl = generateCartWhatsAppUrl(
+        cartItems,
+        customer,
+        deliveryFee,
+        undefined,
+        discountAmount,
+        location
+      );
+      window.open(whatsappUrl, '_blank');
+      return;
+    }
+
     if (!customer.name.trim()) {
       setFormError('يرجى إدخال اسم المستلم لاستلام الطلب');
       return;
@@ -266,6 +280,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       } else {
         finalAddress = 'العراق - موقع GPS مباشر (سيتم التواصل للتأكيد)';
       }
+    }
+
+    // Persist customer info for single product WhatsApp orders and future visits
+    try {
+      localStorage.setItem('queen_customer_info', JSON.stringify({
+        name: customer.name.trim(),
+        phone: customer.phone.trim(),
+        governorate: customer.governorate || 'العراق',
+        address: finalAddress,
+        notes: customer.notes || '',
+      }));
+    } catch {
+      // Ignore storage errors
     }
 
     setIsSubmitting(true);

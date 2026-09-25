@@ -1575,7 +1575,7 @@ ${text}
       trackingCode: 'ORD-TEST',
       customer: {
         name: 'تجربة تنبيه الوالد (طلب اختباري)',
-        phone: '07800000000',
+        phone: '07828956749',
         governorate: 'البصرة',
         district: 'العشار',
         address: 'شارع الكويت',

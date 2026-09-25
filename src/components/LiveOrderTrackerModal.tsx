@@ -49,7 +49,7 @@ import {
 import { Order, OrderStatus } from '../types';
 import { formatIQD, STORE_INFO } from '../data/products';
 import { getProductImageUrl } from '../utils/image';
-import { generateOrderConfirmationWhatsAppUrl } from '../utils/whatsapp';
+import { generateOrderConfirmationWhatsAppUrl, STORE_WHATSAPP_NUMBER, STORE_WHATSAPP_DISPLAY } from '../utils/whatsapp';
 import { StatusAnimatedIcon } from './StatusAnimatedIcon';
 import confetti from 'canvas-confetti';
 import { getOrdersBroadcastChannel } from '../utils/alerts';
@@ -1429,13 +1429,13 @@ ${itemsText}
                 <div className="text-center text-xs text-[#888888] dark:text-[#A1A1AA]">
                   <span>واتساب المتجر: </span>
                   <a
-                    href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent(`مرحباً كوزمتك الملكة، أود الاستفسار عن طلبي برقم #${order.trackingCode}`)}`}
+                    href={`https://wa.me/${STORE_WHATSAPP_NUMBER}?text=${encodeURIComponent(`مرحباً كوزمتك الملكة، أود الاستفسار عن طلبي برقم #${order.trackingCode}`)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="font-bold text-[#25D366] hover:underline"
                     dir="ltr"
                   >
-                    {STORE_INFO.displayPhone}
+                    {STORE_WHATSAPP_DISPLAY}
                   </a>
                 </div>
               </div>

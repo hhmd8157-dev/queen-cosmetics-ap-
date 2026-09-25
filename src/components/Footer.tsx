@@ -1,6 +1,7 @@
 import React from 'react';
 import { Crown, MessageCircle, Phone, MapPin, Clock, Heart, Sparkles, Instagram, Bike, ShieldCheck } from 'lucide-react';
 import { STORE_INFO } from '../data/products';
+import { STORE_WHATSAPP_NUMBER, STORE_WHATSAPP_DISPLAY } from '../utils/whatsapp';
 import { CategoryId } from '../types';
 
 interface FooterProps {
@@ -35,7 +36,7 @@ export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker,
 
             <div className="flex items-center gap-2 pt-1">
               <a
-                href={`https://wa.me/${STORE_INFO.whatsappNumber}`}
+                href={`https://wa.me/${STORE_WHATSAPP_NUMBER}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-8 h-8 rounded-lg bg-[#2E2E2E] hover:bg-[#25D366] text-[#999999] hover:text-white flex items-center justify-center transition-colors"
@@ -182,11 +183,11 @@ export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker,
                 <div>
                   <span className="block text-[#CCCCCC] font-medium text-[11px]">الهاتف والواتساب:</span>
                   <a
-                    href={`https://wa.me/${STORE_INFO.whatsappNumber}`}
+                    href={`https://wa.me/${STORE_WHATSAPP_NUMBER}`}
                     className="text-[#25D366] hover:underline font-mono text-xs"
                     dir="ltr"
                   >
-                    {STORE_INFO.displayPhone}
+                    {STORE_WHATSAPP_DISPLAY}
                   </a>
                 </div>
               </li>
@@ -219,7 +220,7 @@ export const Footer: React.FC<FooterProps> = ({ onSelectCategory, onOpenTracker,
               فريقنا متاح لمساعدتك في اختيار المنتجات المناسبة لنوع بشرتك وشعرك عبر الواتساب.
             </p>
             <a
-              href={`https://wa.me/${STORE_INFO.whatsappNumber}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود استشارة حول المنتجات')}`}
+              href={`https://wa.me/${STORE_WHATSAPP_NUMBER}?text=${encodeURIComponent('مرحباً كوزمتك الملكة، أود استشارة حول المنتجات')}`}
               target="_blank"
               rel="noopener noreferrer"
               className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-center"
